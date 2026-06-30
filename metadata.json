@@ -1,0 +1,6 @@
+{
+  "name": "אולפן פודקאסטים לסטודנטים",
+  "description": "פלטפורמה מקצועית לסטודנטים להקלטה, עריכה, חיתוך ומיזוג קטעי קול לפודקאסטים עם כלי כתיבת תסריטים ועזרי דיון.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
