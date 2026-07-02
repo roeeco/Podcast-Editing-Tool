@@ -3333,7 +3333,7 @@ export default function App() {
                   className="bg-indigo-600 hover:bg-indigo-700 hover:scale-[1.02] text-white font-bold py-3 px-6 rounded-xl shadow-lg transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer text-xs sm:text-sm"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>➕ הוסף פתיח, מעבר או אפקט מוזיקלי</span>
+                  <span> הוסף פתיח, מעבר או אפקט מוזיקלי</span>
                 </button>
               </div>
             ) : (
