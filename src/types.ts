@@ -8,6 +8,7 @@ export interface PodcastTrack {
   trimStart: number; // start trimming time (seconds)
   trimEnd: number; // end trimming time (seconds)
   volume: number; // track volume, e.g. 0 to 1
+  isEffect?: boolean; // indicates if the track is a sound effect/music
 }
 
 export interface ScriptSuggestion {

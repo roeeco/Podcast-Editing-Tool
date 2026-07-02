@@ -30,10 +30,26 @@ import {
   Moon,
   ArrowLeft,
   ArrowRight,
-  Book
+  ArrowRightLeft,
+  Book,
+  ExternalLink,
+  Music,
+  Search,
+  Loader2,
+  CheckCircle
 } from 'lucide-react';
 import { PodcastTrack, ScriptSuggestion, ScriptCard } from './types';
 import { TrackTimeline } from './components/TrackTimeline';
+import {
+  getAllTracksFromDB,
+  saveTrackToDB,
+  deleteTrackFromDB,
+  clearTracksFromDB,
+  saveSettingsToLocalStorage,
+  loadSettingsFromLocalStorage,
+  getConsentStatus,
+  setConsentStatus
+} from './utils/storage';
 
 // Pre-defined Hebrew templates for student scripts representing 1-minute academic podcasts
 const SCRIPT_TEMPLATES: ScriptSuggestion[] = [
@@ -128,6 +144,37 @@ const formatReadTime = (seconds: number) => {
   const secs = seconds % 60;
   if (secs === 0) return `כ-${mins} דקות קריאה`;
   return `כ-${mins} דק' ו-${secs} שניות קריאה`;
+};
+
+const formatInstructionsJSX = (text: string, isDark: boolean) => {
+  if (!text) return null;
+  const parts = text.split(/(\([^)]+\)|\[[^\]]+\])/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('(') && part.endsWith(')')) {
+      return (
+        <span 
+          key={index} 
+          className={`italic font-sans font-medium px-1.5 py-0.5 rounded mx-1 ${
+            isDark ? 'text-amber-400 bg-amber-500/5' : 'text-amber-700/90 bg-amber-500/5'
+          }`}
+        >
+          {part}
+        </span>
+      );
+    } else if (part.startsWith('[') && part.endsWith(']')) {
+      return (
+        <span 
+          key={index} 
+          className={`italic font-sans font-semibold border-b border-dashed px-1.5 py-0.5 rounded mx-1 text-[0.9em] ${
+            isDark ? 'text-indigo-300 bg-indigo-500/10 border-indigo-500/30' : 'text-indigo-800 bg-indigo-50 border-indigo-300'
+          }`}
+        >
+          {part}
+        </span>
+      );
+    }
+    return <span key={index}>{part}</span>;
+  });
 };
 
 interface ReadingCardProps {
@@ -232,12 +279,12 @@ const ReadingCard: React.FC<ReadingCardProps> = ({
 
       {/* Card Body Text */}
       <div
-        className={`flex-1 text-right leading-relaxed font-sans font-medium pointer-events-none mb-6 ${
+        className={`flex-1 text-right leading-relaxed font-sans font-medium pointer-events-none mb-6 whitespace-pre-wrap ${
           isDarkMode ? 'text-zinc-100' : 'text-zinc-800'
         }`}
         style={{ fontSize: `${fontSize}px` }}
       >
-        {card.text}
+        {formatInstructionsJSX(card.text, isDarkMode)}
       </div>
 
       {/* Footer hint */}
@@ -265,7 +312,19 @@ export default function App() {
   // Toggle for showing example podcast scripts
   const [showExamples, setShowExamples] = useState<boolean>(false);
 
+  // AI Prompt Assistant states (SMBK Pod AI Assistant)
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
+  const [aiStudentNotes, setAiStudentNotes] = useState<string>("");
+  const [aiStructure, setAiStructure] = useState<string>("שיחה בין שני אנשים");
+  const [aiOutputFormat, setAiOutputFormat] = useState<string>("תסריט מלא");
+  const [aiDuration, setAiDuration] = useState<string>("3 דקות");
+  const [aiArchetype, setAiArchetype] = useState<string>("בית מדרש");
+  const [aiPromptCopied, setAiPromptCopied] = useState<boolean>(false);
+  const [aiPastedOutput, setAiPastedOutput] = useState<string>("");
+  const [aiTargetType, setAiTargetType] = useState<'cards' | 'text'>('cards');
+
   // Script / Notes panel state
+  const [showConsentModal, setShowConsentModal] = useState<boolean>(false);
   const [scriptContent, setScriptContent] = useState<string>("");
   const [scriptMode, setScriptMode] = useState<'text' | 'cards'>('cards');
   const [scriptCards, setScriptCards] = useState<ScriptCard[]>([]);
@@ -277,7 +336,7 @@ export default function App() {
 
   const handleAddCard = (type: 'intro' | 'body' | 'outro') => {
     const newCard: ScriptCard = {
-      id: `card-${Date.now()}`,
+      id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       type,
       text: type === 'intro' ? 'שלום לכולם וברוכים הבאים להסכת שלנו!' : type === 'body' ? 'בפרק של היום נעסוק ב...' : 'תודה שהאזנתם לנו, להתראות!'
     };
@@ -351,6 +410,132 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // Freesound integration states
+  const [isFreesoundModalOpen, setIsFreesoundModalOpen] = useState<boolean>(false);
+  const [freesoundCategory, setFreesoundCategory] = useState<'intro' | 'transition' | 'outro'>('intro');
+  const [freesoundResults, setFreesoundResults] = useState<any[]>([]);
+  const [freesoundLoading, setFreesoundLoading] = useState<boolean>(false);
+  const [freesoundSearchQuery, setFreesoundSearchQuery] = useState<string>("");
+  const [previewPlayingId, setPreviewPlayingId] = useState<string | null>(null);
+  const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
+
+  const fetchFreesoundAssets = async (category: 'intro' | 'transition' | 'outro', customQuery?: string) => {
+    setFreesoundLoading(true);
+    setErrorMsg(null);
+    try {
+      let query = customQuery;
+      if (!query) {
+        if (category === 'intro') {
+          query = 'podcast intro music';
+        } else if (category === 'transition') {
+          query = 'podcast transition effect';
+        } else {
+          query = 'podcast closing music';
+        }
+      }
+
+      const response = await fetch(`/api/freesound?type=${category === 'transition' ? 'soundeffects' : 'music'}&q=${encodeURIComponent(query)}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch from proxy, status: ${response.status}`);
+      }
+      const data = await response.json();
+      setFreesoundResults(data.results || []);
+    } catch (error: any) {
+      console.error('Error loading Freesound assets:', error);
+      setErrorMsg('שגיאה בטעינת קטעי שמע מ-Freesound. אנא נסה שוב.');
+    } finally {
+      setFreesoundLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isFreesoundModalOpen) {
+      fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery);
+    }
+  }, [isFreesoundModalOpen, freesoundCategory]);
+
+  useEffect(() => {
+    if (!isFreesoundModalOpen) {
+      if (previewAudio) {
+        previewAudio.pause();
+        previewAudio.src = '';
+        setPreviewAudio(null);
+      }
+      setPreviewPlayingId(null);
+      setFreesoundSearchQuery("");
+    }
+  }, [isFreesoundModalOpen]);
+
+  const togglePreviewAudio = (hitId: string, audioUrl: string) => {
+    if (previewPlayingId === hitId && previewAudio) {
+      previewAudio.pause();
+      setPreviewPlayingId(null);
+    } else {
+      if (previewAudio) {
+        previewAudio.pause();
+      }
+      const audio = new Audio(audioUrl);
+      audio.play().catch(e => console.error("Error playing preview:", e));
+      audio.onended = () => {
+        setPreviewPlayingId(null);
+      };
+      setPreviewAudio(audio);
+      setPreviewPlayingId(hitId);
+    }
+  };
+
+  const handleAddFreesoundTrack = async (hit: any) => {
+    if (previewAudio) {
+      previewAudio.pause();
+      previewAudio.src = '';
+      setPreviewAudio(null);
+    }
+    setPreviewPlayingId(null);
+
+    setIsUploading(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const categoryHebrew = freesoundCategory === 'intro' ? 'פתיח' : freesoundCategory === 'transition' ? 'מעברון' : 'סגיר';
+    const rawTags = (hit.tags && hit.tags.length > 0) ? hit.tags.join(', ') : '';
+    const cleanTag = (hit.tags && hit.tags.length > 0) ? hit.tags[0] : 'Freesound';
+    const trackName = `אפקט/מוזיקה (${categoryHebrew}) - ${cleanTag}`;
+
+    try {
+      const audioUrl = hit.previews['preview-hq-mp3'] || hit.previews['preview-lq-mp3'];
+      const audioResponse = await fetch(audioUrl);
+      if (!audioResponse.ok) {
+        throw new Error('CORS or Network error downloading file');
+      }
+      const audioBlob = await audioResponse.blob();
+
+      const decodedBuffer = await decodeFileToBuffer(audioBlob);
+      const duration = decodedBuffer.duration;
+
+      const newTrack: PodcastTrack = {
+        id: `track-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        name: trackName,
+        blob: audioBlob,
+        audioUrl: URL.createObjectURL(audioBlob),
+        audioBuffer: decodedBuffer,
+        duration: duration,
+        trimStart: 0,
+        trimEnd: duration,
+        volume: 0.8,
+        isEffect: true,
+      };
+
+      setTracks((prev) => [...prev, newTrack]);
+      setSuccessMsg(`התווסף בהצלחה: ${trackName}`);
+      setIsFreesoundModalOpen(false);
+    } catch (err: any) {
+      console.error('Error adding Freesound track:', err);
+      alert('לא ניתן היה להוריד את הקובץ ישירות בשל הגבלות דפדפן, אנא נסה קטע אחר');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   // Native recording instances
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -369,11 +554,16 @@ export default function App() {
 
   // Merge & Export State
   const [isMerging, setIsMerging] = useState<boolean>(false);
+  const [hasUnmergedChanges, setHasUnmergedChanges] = useState<boolean>(true);
   const [mergedBlob, setMergedBlob] = useState<Blob | null>(null);
   const [mergedUrl, setMergedUrl] = useState<string | null>(null);
   const [mergedDuration, setMergedDuration] = useState<number>(0);
   const [isMergedPlayerPlaying, setIsMergedPlayerPlaying] = useState<boolean>(false);
   const mergedAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    setHasUnmergedChanges(true);
+  }, [tracks]);
 
   const [showHeader, setShowHeader] = useState<boolean>(true);
   const [lastScrollY, setLastScrollY] = useState<number>(0);
@@ -399,6 +589,163 @@ export default function App() {
     };
   }, [lastScrollY]);
 
+  // Synchronize AI Assistant Output Presentation Format with the editing style (scriptMode) above the panel
+  useEffect(() => {
+    if (scriptMode === 'text') {
+      setAiOutputFormat("תסריט מלא");
+      setAiTargetType("text");
+    } else if (scriptMode === 'cards') {
+      setAiOutputFormat("כרטיסיות שיחה דינמיות - Talking Points");
+      setAiTargetType("cards");
+    }
+  }, [scriptMode]);
+
+  // Load saved settings and tracks on initial load if consent is accepted
+  useEffect(() => {
+    const hasConsented = getConsentStatus();
+    if (!hasConsented) {
+      setShowConsentModal(true);
+    } else {
+      loadSavedData();
+    }
+  }, []);
+
+  const loadSavedData = async () => {
+    const settings = loadSettingsFromLocalStorage();
+    if (settings) {
+      if (settings.podcastName !== undefined) setPodcastName(settings.podcastName);
+      if (settings.participants !== undefined) setParticipants(settings.participants);
+      if (settings.scriptContent !== undefined) setScriptContent(settings.scriptContent);
+      if (settings.scriptMode !== undefined) setScriptMode(settings.scriptMode);
+      if (settings.scriptCards !== undefined) setScriptCards(settings.scriptCards);
+      if (settings.activeCardIndex !== undefined) setActiveCardIndex(settings.activeCardIndex);
+      if (settings.aiStudentNotes !== undefined) setAiStudentNotes(settings.aiStudentNotes);
+      if (settings.aiStructure !== undefined) setAiStructure(settings.aiStructure);
+      if (settings.aiOutputFormat !== undefined) setAiOutputFormat(settings.aiOutputFormat);
+      if (settings.aiDuration !== undefined) setAiDuration(settings.aiDuration);
+      if (settings.aiArchetype !== undefined) setAiArchetype(settings.aiArchetype);
+    }
+
+    try {
+      const storedTracks = await getAllTracksFromDB();
+      if (storedTracks && storedTracks.length > 0) {
+        const decodedTracks: PodcastTrack[] = [];
+        for (const st of storedTracks) {
+          try {
+            const audioBuffer = await decodeFileToBuffer(st.blob);
+            decodedTracks.push({
+              id: st.id,
+              name: st.name,
+              blob: st.blob,
+              audioUrl: URL.createObjectURL(st.blob),
+              audioBuffer,
+              duration: st.duration,
+              trimStart: st.trimStart,
+              trimEnd: st.trimEnd,
+              volume: st.volume
+            });
+          } catch (err) {
+            console.error(`Failed to decode track ${st.id} on load:`, err);
+          }
+        }
+
+        if (settings && settings.trackIdsOrder) {
+          const orderMap = new Map(settings.trackIdsOrder.map((id, index) => [id, index]));
+          decodedTracks.sort((a, b) => {
+            const indexA = orderMap.has(a.id) ? orderMap.get(a.id)! : 9999;
+            const indexB = orderMap.has(b.id) ? orderMap.get(b.id)! : 9999;
+            return indexA - indexB;
+          });
+        }
+
+        if (decodedTracks.length > 0) {
+          setTracks(decodedTracks);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading tracks on startup:', err);
+    }
+  };
+
+  // Auto-save settings when changes occur
+  useEffect(() => {
+    if (!getConsentStatus()) return;
+    saveSettingsToLocalStorage({
+      podcastName,
+      participants,
+      scriptContent,
+      scriptMode,
+      scriptCards,
+      activeCardIndex,
+      aiStudentNotes,
+      aiStructure,
+      aiOutputFormat,
+      aiDuration,
+      aiArchetype,
+      trackIdsOrder: tracks.map(t => t.id)
+    });
+  }, [
+    podcastName,
+    participants,
+    scriptContent,
+    scriptMode,
+    scriptCards,
+    activeCardIndex,
+    aiStudentNotes,
+    aiStructure,
+    aiOutputFormat,
+    aiDuration,
+    aiArchetype,
+    tracks
+  ]);
+
+  // Sync tracks state with IndexedDB
+  useEffect(() => {
+    if (!getConsentStatus()) return;
+
+    const syncTracksWithDB = async () => {
+      try {
+        const storedTracks = await getAllTracksFromDB();
+        const storedMap = new Map(storedTracks.map(t => [t.id, t]));
+        const currentMap = new Map(tracks.map(t => [t.id, t]));
+
+        // 1. Delete tracks no longer in state
+        for (const stored of storedTracks) {
+          if (!currentMap.has(stored.id)) {
+            await deleteTrackFromDB(stored.id);
+          }
+        }
+
+        // 2. Add or update tracks
+        for (const track of tracks) {
+          const stored = storedMap.get(track.id);
+          const needsSave = !stored ||
+            stored.name !== track.name ||
+            stored.trimStart !== track.trimStart ||
+            stored.trimEnd !== track.trimEnd ||
+            stored.volume !== track.volume ||
+            stored.duration !== track.duration;
+
+          if (needsSave) {
+            await saveTrackToDB({
+              id: track.id,
+              name: track.name,
+              blob: track.blob,
+              duration: track.duration,
+              trimStart: track.trimStart,
+              trimEnd: track.trimEnd,
+              volume: track.volume
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Error syncing tracks to DB:', err);
+      }
+    };
+
+    syncTracksWithDB();
+  }, [tracks]);
+
   // Derived content for teleprompter based on mode
   const teleprompterText = useMemo(() => {
     if (scriptMode === 'text') {
@@ -418,9 +765,15 @@ export default function App() {
     return lines.map((line) => {
       const lineWords = line.split(/\s+/).filter(Boolean);
       const mapped = lineWords.map((word) => {
+        const isSpeakerInstruction = word.includes('(') || word.includes(')');
+        const isGeneralInstruction = word.includes('[') || word.includes(']');
+        const isInstruction = isSpeakerInstruction || isGeneralInstruction;
         const item = {
           word,
           index: globalIndex,
+          isInstruction,
+          isSpeakerInstruction,
+          isGeneralInstruction,
         };
         globalIndex++;
         return item;
@@ -534,6 +887,20 @@ export default function App() {
     };
   }, []);
 
+  // Keep aiTargetType in sync with scriptMode
+  useEffect(() => {
+    setAiTargetType(scriptMode);
+  }, [scriptMode]);
+
+  // Keep aiOutputFormat in sync with aiTargetType
+  useEffect(() => {
+    if (aiTargetType === 'text') {
+      setAiOutputFormat("תסריט מלא");
+    } else {
+      setAiOutputFormat("כרטיסיות שיחה דינמיות - Talking Points");
+    }
+  }, [aiTargetType]);
+
   // Format seconds to MM:SS
   const formatTime = (secs: number): string => {
     const mins = Math.floor(secs / 60);
@@ -626,7 +993,7 @@ export default function App() {
           const duration = decodedBuffer.duration;
 
           const newTrack: PodcastTrack = {
-            id: `track-${Date.now()}`,
+            id: `track-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             name: `הקלטה מהמיקרופון - טייק ${tracks.filter((t) => t.name.includes('הקלטה')).length + 1}`,
             blob: audioBlob,
             audioUrl: URL.createObjectURL(audioBlob),
@@ -681,7 +1048,7 @@ export default function App() {
   };
 
   // Helper: Decode File/Blob to AudioBuffer using lazy AudioContext
-  const decodeFileToBuffer = async (fileOrBlob: File | Blob): Promise<AudioBuffer> => {
+  async function decodeFileToBuffer(fileOrBlob: File | Blob): Promise<AudioBuffer> {
     const audioCtx = getAudioContext();
     const arrayBuffer = await fileOrBlob.arrayBuffer();
     return new Promise((resolve, reject) => {
@@ -694,7 +1061,7 @@ export default function App() {
         }
       );
     });
-  };
+  }
 
   // 5. Handle File Upload
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -970,6 +1337,7 @@ export default function App() {
       setMergedBlob(pcmWavBlob);
       setMergedUrl(downloadableUrl);
       setMergedDuration(totalSeconds);
+      setHasUnmergedChanges(false);
       setSuccessMsg('🏆 ההסכת חובר ומוזג בהצלחה! השתמש/י בנגן למטה כדי להאזין או לחץ/י על כפתור ההורדה.');
 
     } catch (err: any) {
@@ -1062,7 +1430,10 @@ export default function App() {
   const toggleMergedAudio = () => {
     if (!mergedUrl) return;
 
-    if (!mergedAudioRef.current) {
+    if (!mergedAudioRef.current || mergedAudioRef.current.src !== mergedUrl) {
+      if (mergedAudioRef.current) {
+        mergedAudioRef.current.pause();
+      }
       mergedAudioRef.current = new Audio(mergedUrl);
       mergedAudioRef.current.onended = () => {
         setIsMergedPlayerPlaying(false);
@@ -1083,6 +1454,20 @@ export default function App() {
           setErrorMsg('שגיאה בניסיון להשמיע את ההסכת הממוזג.');
         });
     }
+  };
+
+  // Helper to format speaker and general instructions for PDF output
+  const formatInstructionsHTML = (text: string): string => {
+    if (!text) return '';
+    let escaped = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    // parentheticals (speaker instructions)
+    escaped = escaped.replace(/(\([^)]+\))/g, '<span class="speaker-instruction">$1</span>');
+    // brackets (general instructions / staging)
+    escaped = escaped.replace(/(\[[^\]]+\])/g, '<span class="general-instruction">$1</span>');
+    return escaped;
   };
 
   // Export script and cards to a beautiful, printable PDF
@@ -1107,7 +1492,7 @@ export default function App() {
         return `
           <div class="card-box">
             <span class="card-header-badge">${typeLabel} #${idx + 1}</span>
-            <p class="card-body-text">${card.text}</p>
+            <p class="card-body-text">${formatInstructionsHTML(card.text)}</p>
           </div>
         `;
       }).join('');
@@ -1123,9 +1508,9 @@ export default function App() {
             const time = dialogueMatch[1] ? `<span style="color: #4b5563; font-family: monospace; font-size: 13px; margin-left: 8px; background-color: #f3f4f6; padding: 2px 6px; border-radius: 4px;">${dialogueMatch[1]}</span>` : '';
             const speaker = `<strong style="color: #000000; font-size: 15px; border-bottom: 2px solid #000000; padding-bottom: 1px;">${dialogueMatch[2]}:</strong>`;
             const rest = p.substring(dialogueMatch[0].length);
-            return `<p style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0;">${time} ${speaker} ${rest}</p>`;
+            return `<p style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0;">${time} ${speaker} ${formatInstructionsHTML(rest)}</p>`;
           }
-          return `<p style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0;">${p}</p>`;
+          return `<p style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0;">${formatInstructionsHTML(p)}</p>`;
         })
         .join('');
     }
@@ -1276,6 +1661,30 @@ export default function App() {
             font-weight: 500;
           }
 
+          /* Styling of speaker and general instructions inside the PDF */
+          .speaker-instruction {
+            color: #b45309 !important; /* amber-700 */
+            background-color: #fef3c7 !important; /* amber-100 */
+            font-style: italic;
+            font-size: 13px;
+            padding: 1px 4px;
+            border-radius: 4px;
+            margin: 0 2px;
+            display: inline-block;
+          }
+          .general-instruction {
+            color: #3730a3 !important; /* indigo-800 */
+            background-color: #e0e7ff !important; /* indigo-100 */
+            font-style: italic;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px dashed #c7d2fe;
+            margin: 0 2px;
+            display: inline-block;
+          }
+
           @media print {
             body {
               padding: 0;
@@ -1406,7 +1815,79 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#1a1a24] text-zinc-100 selection:bg-zinc-500/30">
+    <div className={`min-h-screen flex flex-col selection:bg-zinc-500/30 transition-colors duration-300 ${
+      isDarkMode ? 'bg-[#1a1a24] text-zinc-100' : 'bg-[#f4f4f8] text-zinc-900'
+    }`}>
+      
+      {/* Privacy and Storage Consent Modal */}
+      <AnimatePresence>
+        {showConsentModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 overflow-y-auto"
+            dir="rtl"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className={`relative max-w-lg w-full rounded-2xl p-6 md:p-8 shadow-2xl border text-right ${
+                isDarkMode 
+                  ? 'bg-[#1e1e24] text-zinc-100 border-zinc-800' 
+                  : 'bg-white text-zinc-800 border-zinc-200'
+              }`}
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-amber-500/10 text-amber-500">
+                  <Info className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className={`text-xl md:text-2xl font-black ${isDarkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
+                    שמירת עבודה והגנה על הפרטיות
+                  </h2>
+                  <p className="text-xs opacity-70">
+                    MTEACH Podcast Studio
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 text-sm md:text-base leading-relaxed opacity-90">
+                <p>
+                  האתר משתמש באחסון המקומי של הדפדפן (Local Storage ו-IndexedDB) כדי לשמור באופן אוטומטי את ההקלטות שלכם, כרטיסיות השיחה, והטקסט שכתבתם.
+                </p>
+                <p className="font-bold text-[#ffcc00]">
+                  כך, גם אם תצאו בטעות מהאתר או תרעננו את הדף, כל העבודה שלכם תישמר ותוכלו להמשיך בדיוק מאותה נקודה.
+                </p>
+                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-[#252530] border-zinc-800 text-zinc-300' : 'bg-zinc-50 border-zinc-200 text-zinc-700'}`}>
+                  <p className="font-bold flex items-center gap-2 mb-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+                    המידע שלכם נשאר אצלכם במכשיר:
+                  </p>
+                  <p className="text-xs md:text-sm">
+                    כל קבצי השמע והטקסטים נשמרים <strong>אך ורק מקומית במכשיר האישי שלכם</strong>. אין שום העלאה של חומרי ההקלטה לשרתים חיצוניים, והפרטיות שלכם מוגנת ב-100%.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-8 flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => {
+                    setConsentStatus(true);
+                    setShowConsentModal(false);
+                    loadSavedData();
+                  }}
+                  className="w-full bg-[#ffcc00] text-[#1a1a24] font-bold py-3.5 px-6 rounded-xl hover:bg-[#ffe066] transition-all duration-200 shadow-lg shadow-amber-500/10 hover:shadow-amber-500/20 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Check className="w-5 h-5" />
+                  <span>אני מאשר/ת ומבין/ה – בואו נתחיל!</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       {/* Top Banner / Navigation */}
       <header className={`flex-none flex flex-col justify-center px-8 sticky top-0 z-50 bg-[#252530]/95 border-b border-zinc-800/40 backdrop-blur-md py-4 gap-3 transition-all duration-300 ease-in-out ${
@@ -1820,6 +2301,515 @@ export default function App() {
                 </>
               ) : (
                 <>
+                  {/* AI Prompt Generator Scaffolding Assistant (SMBK Pod AI Assistant) */}
+                  <div className={`rounded-2xl border p-4.5 mb-5 transition-all duration-300 ${
+                    isAiAssistantOpen
+                      ? (isDarkMode ? 'bg-[#1c1c22] border-indigo-500/40 shadow-lg shadow-indigo-950/20' : 'bg-indigo-50/50 border-indigo-200 shadow-md')
+                      : (isDarkMode ? 'bg-[#2a2a33]/45 border-zinc-700/40 hover:border-zinc-600/60' : 'bg-zinc-50 border-zinc-200 hover:bg-zinc-100/80')
+                  }`}>
+                    <button
+                      onClick={() => setIsAiAssistantOpen(!isAiAssistantOpen)}
+                      className="w-full flex items-center justify-between font-bold text-xs sm:text-sm text-right cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 animate-pulse" />
+                        <span className={isDarkMode ? 'text-zinc-100 font-sans' : 'text-zinc-800 font-sans'}>
+                          סייע כתיבת כרטיסיות דיון
+                        </span>
+                        <span className="text-[9px] font-black tracking-wide px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase">
+                          חדש!
+                        </span>
+                      </div>
+                      {isAiAssistantOpen ? <ChevronUp className="w-4.5 h-4.5 text-zinc-400" /> : <ChevronDown className="w-4.5 h-4.5 text-zinc-400" />}
+                    </button>
+
+                    {isAiAssistantOpen && (
+                      <div className="mt-4 pt-4 border-t border-zinc-700/20 flex flex-col gap-4 text-xs sm:text-sm">
+                        <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                          השתמשו בכלי זה כפיגום דיגיטלי (Scaffolding) כדי לתרגם את החומר העיוני שלכם למתווה שיח מוכן להקלטה. 
+                          מלאו את השדות שלהלן, לחצו על כפתור ההפקה והמערכת תעתיק את הפרומפט המתוחכם עבורכם ותפתח את Gemini בדפדפן!
+                        </p>
+
+                        {/* Step A - Raw Notes Input */}
+                        <div className="flex flex-col gap-1.5">
+                          <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                            שלב א׳ – הזנת הקלט הגולמי (נקודות מפתח, סיכומי שיעור או עוגני תוכן):
+                          </label>
+                          <textarea
+                            value={aiStudentNotes}
+                            onChange={(e) => setAiStudentNotes(e.target.value)}
+                            placeholder="למשל: עקרונות הערכה חלופית, הבדל בין הערכה מסכמת לעיצוב, אתגרי המורה בכיתה הטרוגנית, חשיבות משוב איכותני מעמיק..."
+                            className={`w-full min-h-[90px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed resize-none font-sans border ${
+                              isDarkMode
+                                ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700 focus:border-indigo-500'
+                                : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-400'
+                            }`}
+                          />
+                        </div>
+
+                        {/* Step B - Dialogic Architecture Parameters */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                          
+                          {/* Structure */}
+                          <div className="flex flex-col gap-1.5">
+                            <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                              מבנה השיחה:
+                            </label>
+                            <select
+                              value={aiStructure}
+                              onChange={(e) => setAiStructure(e.target.value)}
+                              className={`rounded-xl p-2.5 font-bold cursor-pointer border ${
+                                isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
+                              }`}
+                            >
+                              <option value="שיחה בין שני אנשים">שיחה בין שני אנשים</option>
+                              <option value="פאנל עמיתים">פאנל עמיתים</option>
+                              <option value="ראיון">ראיון</option>
+                              <option value="מנחה ומומחה">מנחה ומומחה</option>
+                              <option value="משתתף יחיד">משתתף יחיד (מונולוג)</option>
+                            </select>
+                          </div>
+
+                          {/* Output Presentation Format (synced with editor style above) */}
+                          <div className="flex flex-col gap-1.5">
+                            <label className={`font-bold flex items-center justify-between ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                              <span>אופן הצגת השיחה:</span>
+                              <span className="text-[10px] font-sans font-normal opacity-75">
+                                (נקבע לפי סגנון העריכה שמעל)
+                              </span>
+                            </label>
+                            <select
+                              disabled
+                              value={aiOutputFormat}
+                              className={`rounded-xl p-2.5 font-bold border cursor-not-allowed opacity-80 ${
+                                isDarkMode ? 'bg-[#1e1e24] text-zinc-300 border-zinc-800' : 'bg-zinc-100 text-zinc-600 border-zinc-200'
+                              }`}
+                            >
+                              <option value="תסריט מלא">תסריט מלא</option>
+                              <option value="כרטיסיות שיחה דינמיות - Talking Points">כרטיסיות שיחה דינמיות (Talking Points)</option>
+                            </select>
+                          </div>
+                          
+                          {/* Duration */}
+                          <div className="flex flex-col gap-1.5">
+                            <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                              זמן כולל מיועד:
+                            </label>
+                            <input
+                              type="text"
+                              value={aiDuration}
+                              onChange={(e) => setAiDuration(e.target.value)}
+                              placeholder="למשל: דקה אחת / 3 דקות"
+                              className={`rounded-xl p-2.5 font-bold border ${
+                                isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
+                              }`}
+                            />
+                          </div>
+
+                        </div>
+
+                        {/* Step C - Dialogic & Cognitive Archetype Alignment */}
+                        <div className="flex flex-col gap-2 p-3 rounded-xl border border-indigo-500/10 bg-indigo-500/5">
+                          <label className={`font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-800'}`}>
+                            <Book className="w-4 h-4 text-indigo-400" />
+                            ארכיטיפ דיאלוגי / קוגניטיבי (לב המהלך הפדגוגי):
+                          </label>
+                          <p className={`text-[11px] leading-relaxed mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                            בחרו את הפרוטוקול והמבנה הדידקטי המתאים להצפת והערכת הידע שברצונכם להציג:
+                          </p>
+                          <div className="grid grid-cols-1 gap-2">
+                            {[
+                              {
+                                id: 'בית מדרש',
+                                title: 'בית מדרש',
+                                desc: 'מציג, מקשה, מחדד, מסכם (בוחן מורכבות והקשבה עמוקה לזולת)'
+                              },
+                              {
+                                id: 'הסבר לציבור',
+                                title: 'הסבר לציבור',
+                                desc: 'שאלה, הסבר מושגי פשוט, דוגמה מהחיים, והפרכת מיתוס רווח (בוחן ארגון ופישוט ידע)'
+                              },
+                              {
+                                id: 'מקרה מבחן',
+                                title: 'מקרה מבחן',
+                                desc: 'סיפור אישי או אירוע מוחשי מהשטח, ולאחר מכן ניתוח פדגוגי מבוסס תיאוריה (בוחן יישום ואמפתיה)'
+                              },
+                              {
+                                id: 'העמדה שמתפרקת',
+                                title: 'העמדה שמתפרקת',
+                                desc: 'פתיחה בטיעון קיצוני/שכיח, פגישת התנגדויות וסתירות, וחילוץ מסקנה ביקורתית מאוזנת (בוחן חשיבה ביקורתית)'
+                              },
+                              {
+                                id: 'שולחן עגול',
+                                title: 'שולחן עגול',
+                                desc: 'ייצוג בעלי עניין שונים (תלמיד, מורה, הורה, מנהל...) סביב סוגיית ליבה מורכבת (בוחן הבנה מערכתית)'
+                              }
+                            ].map((arch) => (
+                              <label
+                                key={arch.id}
+                                onClick={() => setAiArchetype(arch.id)}
+                                className={`p-2 rounded-lg border transition-all cursor-pointer flex flex-col gap-0.5 text-right ${
+                                  aiArchetype === arch.id
+                                    ? (isDarkMode ? 'bg-indigo-950/40 border-indigo-400 text-white' : 'bg-indigo-50 border-indigo-400 text-indigo-950')
+                                    : (isDarkMode ? 'bg-[#1c1c22] border-zinc-800 hover:border-zinc-700 text-zinc-300' : 'bg-white border-zinc-200 hover:border-zinc-300 text-zinc-700')
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5 font-bold text-xs">
+                                  <input
+                                    type="radio"
+                                    name="aiArchetype"
+                                    checked={aiArchetype === arch.id}
+                                    onChange={() => {}}
+                                    className="accent-indigo-500 cursor-pointer"
+                                  />
+                                  <span>{arch.title}</span>
+                                </div>
+                                <span className={`text-[10px] pr-5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                                  {arch.desc}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Action Button: Generate & Copy Prompt, then Open Gemini */}
+                        <button
+                          onClick={() => {
+                            if (!aiStudentNotes.trim()) {
+                              alert('אנא הזינו קודם כל את רשימות התוכן שלכם בשלב א׳.');
+                              return;
+                            }
+
+                            const generatedPrompt = `שלום ג׳מיני. אתה מומחה להנדסת פרומפטים פדגוגיים וארכיטקטורת דיאלוגים לתחום הכשרת המורים (MTEACH).
+התפקיד שלך הוא לתרגם את רשימות התוכן והרעיונות שלי למתווה שיח פדגוגי מוכן להקלטה.
+
+להלן פרטי הפודקאסט המבוקש:
+1. נקודות מפתח ותוכן עיוני (עוגני תוכן):
+"${aiStudentNotes}"
+
+2. מבנה השיחה: ${aiStructure}
+3. פורמט הפלט המבוקש: ${aiOutputFormat}
+4. משך זמן מיועד: ${aiDuration}
+5. ארכיטיפ קוגניטיבי/דיאלוגי מוביל: ${aiArchetype}
+
+הנחיות פדגוגיות ומבניות קשיחות שעליך ליישם בדיוק רב:
+- עוגני תוכן מובלעים: ודא שכל עוגני התוכן והמושגים שציינתי ברשימות משולבים באופן טבעי לאורך הדיון.
+- ללא הערות טון או הנחיות משחק: אין לכתוב בסוגריים עגולים שום הנחיה לגבי טון הדיבור, אינטונציה, הבעה או רגש של המשתתפים (למשל, אל תכתוב "(בחיוך)", "(בהפתעה)", "(בטון רפלקטיבי)"). הסטודנטים יחליטו בעצמם כיצד לגשת לשיח ולהביע את עצמם.
+- ללא הערות הפקה, מעברים או מוזיקה: אין לכתוב בסוגריים מרובעים או עגולים שום הנחיות בימוי, אפקטים, מוזיקה או מעברים (למשל, אל תכתוב "[מוזיקת רקע עולה]", "[הפסקה]", "[מעבר לכרטיסייה הבאה]").
+
+- התאמה מלאה לפורמט הפלט:
+  ${aiOutputFormat === 'תסריט מלא' 
+    ? `עבור "תסריט מלא": כתוב תסריט דיאלוג מלא וזורם בשפה דבורה, חמה וטבעית מנקודת המבט של הסטודנטים המקליטים (כתיבה בגוף ראשון), אך ללא שום הנחיות טון או מוזיקה בסוגריים.` 
+    : `עבור "כרטיסיות שיחה דינמיות - Talking Points": חל איסור מוחלט ומלא לכתוב תסריט, דיאלוג או משפטים מוכנים מראש לקריאה (אסור לכתוב "משה: ..." או "רועי: ..."). 
+    התוכן של כל כרטיסייה חייב להיות מנוסח אך ורק כנקודות מפתח (Bullet Points), מושגי ליבה, כיווני מחשבה, רעיונות ושאלות מנחות לכל משתתף שיאפשרו לסטודנטים לנהל שיח ספונטני וטבעי לחלוטין - ללא הקראת טקסט מובנה מילה במילה. זהו לב העניין של הכרטיסיות!`
+  }
+
+- מבנה הדיאלוג בהתאם לארכיטיפ הנבחר (${aiArchetype}):
+  ${aiArchetype === 'בית מדרש' ? 'עליך לבנות את מהלך הדיון לפי שלבי "בית מדרש": פתיחה בהצגת הנושא/מושג, העלאת קושי או קושיה מהותית, חידוד ודיוק הסתירה, וסיכום רפלקטיבי אינטגרטיבי (לבחינת מורכבות והקשבה עמוקה).' : ''}
+  ${aiArchetype === 'הסבר לציבור' ? 'עליך לבנות את מהלך הדיון לפי שלבי "הסבר לציבור": שאילת שאלה מעוררת עניין, מתן הסבר מושגי פשוט וברור, הדגמה מעשית מהחיים, והפרכת מיתוס רווח בנושא (לבחינת ארגון ופישוט ידע).' : ''}
+  ${aiArchetype === 'מקרה מבחן' ? 'עליך לבנות את מהלך הדיון לפי שלבי "מקרה מבחן": פתיחה בסיפור אישי או אירוע מוחשי שהתרחש בשטח/בכיתה, ולאחר מכן ניתוח פדגוגי מעמיק מתוך החומר התיאורטי והכלים שלמדנו (לבחינת יישום מעשי ואמפתיה).' : ''}
+  ${aiArchetype === 'העמדה שמתפרקת' ? 'עליך לבנות את מהלך הדיון לפי שלבי "העמדה שמתפרקת": הצגת טיעון קיצוני או עמדה מסורתית רווחת בפתיחה, מפגש עם התנגדויות וסתירות פנימיות, וחילוץ של מסקנה ביקורתית ומאוזנת (לבחינת חשיבה ביקורתית מורכבת).' : ''}
+  ${aiArchetype === 'שולחן עגול' ? 'עליך לבנות את מהלך הדיון סביב סוגיית ליבה מורכבת שבה מיוצגים בעלי עניין שונים ומגוונים (למשל: תלמיד, מורה, הורה, מנהל, קובע מדיניות), כאשר כל אחד מציג את זווית ראייתו הייחודית ומתפתח ביניהם דיון דינמי (לבחינת הבנה מערכתיר רחבה).' : ''}
+
+- פורמט מבנה פלט קשיח לפענוח אוטומטי (קריטי):
+  ${aiOutputFormat === 'תסריט מלא'
+    ? 'אנא החזר את התסריט המלא כפסקאות ברורות, כאשר כל פסקה מתחילה בשם הדובר ונקודתיים, למשל:\nנועם: שלום לכולם...\nמיכל: אהלן נועם...'
+    : 'אנא החזר את כרטיסיות הדיון עטופות בתוויות הפרדה קשיחות של "=== כרטיסייה ===" בדיוק בפורמט הבא עבור כל כרטיסייה:\n\n=== כרטיסייה ===\nסוג: [פתיח / גוף הדיון / סיכום]\nטקסט: [נקודות שיחה מנחות (Talking Points), מושגים, עוגנים ושאלות מפתח ממוקדות לכל דובר - מנוסח אך ורק כנקודות (Bullet Points), ללא תסריט דיאלוג של מילה במילה!]\n\nאין להוסיף טקסט מקדים או מסכם מחוץ לפורמט זה כדי לא לפגוע בפענוח.'}
+
+אנא הפק כעת את הפלט המבוקש בעברית רהוטה ופדגוגית בדיוק רב, ללא הקדמות נוספות מצידך - התחל ישירות בתוכן הפודקאסט עצמו.`;
+
+                            navigator.clipboard.writeText(generatedPrompt).then(() => {
+                              setAiPromptCopied(true);
+                              setTimeout(() => setAiPromptCopied(false), 4000);
+                              window.open('https://gemini.google.com/', '_blank');
+                            }).catch(err => {
+                              console.error('Failed to copy text: ', err);
+                              window.open('https://gemini.google.com/', '_blank');
+                            });
+                          }}
+                          className="w-full mt-2 py-3 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-xs sm:text-sm"
+                        >
+                          <Sparkles className="w-4 h-4 text-indigo-200" />
+                          <span>{aiPromptCopied ? '✅ הפרומפט הועתק! פותח את Gemini...' : 'הפק והעתק פרומפט פדגוגי ופתח את Gemini חיצונית'}</span>
+                          <ExternalLink className="w-4 h-4 text-indigo-200 animate-bounce" />
+                        </button>
+
+                         {aiPromptCopied && (
+                          <p className="text-center font-bold text-emerald-500 text-xs animate-pulse mt-1">
+                            הפרומפט הועתק ללוח בהצלחה! הדביקו אותו ב-Gemini שנפתח כעת בכרטיסייה חדשה.
+                          </p>
+                        )}
+
+                        {/* Step B - Parser / Return Flow */}
+                        <div className="border-t border-zinc-700/25 my-5 pt-5 flex flex-col gap-4">
+                          <div className="flex items-center gap-2">
+                            <ArrowRightLeft className="w-4.5 h-4.5 text-indigo-400 shrink-0" />
+                            <h4 className={`font-bold text-sm ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>
+                              שלב ב׳ – קליטת התוצר מ-Gemini (פענוח והזרקה אוטומטית)
+                            </h4>
+                          </div>
+                          
+                          <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                            העתיקו את התוצאה המלאה שג׳מיני ייצר, והדביקו אותה כאן או טענו קובץ טקסט. המערכת תפרק ותאכלס את התוכן שלכם אוטומטית במערכת ההקלטה!
+                          </p>
+
+                          {/* File upload action */}
+                          <div className="flex flex-col gap-1.5">
+                            <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} flex items-center justify-between`}>
+                              <span>טענו קובץ טקסט (אופציונלי):</span>
+                              <span className="text-[10px] font-mono opacity-60">TXT, MD, JSON</span>
+                            </label>
+                            <input
+                              type="file"
+                              id="file-upload-parser"
+                              accept=".txt,.md,.json"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onload = (event) => {
+                                  const text = event.target?.result;
+                                  if (typeof text === 'string') {
+                                    setAiPastedOutput(text);
+                                  }
+                                };
+                                reader.readAsText(file);
+                              }}
+                              className={`text-xs p-2 rounded-xl border focus:outline-none cursor-pointer file:cursor-pointer file:rounded-lg file:border-0 file:text-xs file:font-bold file:px-3 file:py-1 ${
+                                isDarkMode 
+                                  ? 'bg-[#1e1e24] text-zinc-300 border-zinc-800 file:bg-zinc-800 file:text-zinc-200' 
+                                  : 'bg-zinc-50 text-zinc-600 border-zinc-200 file:bg-zinc-200 file:text-zinc-800'
+                              }`}
+                            />
+                          </div>
+
+                          {/* Paste Output Text Area */}
+                          <div className="flex flex-col gap-1.5">
+                            <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                              הדביקו כאן את פלט השיחה מ-Gemini:
+                            </label>
+                            <textarea
+                              value={aiPastedOutput}
+                              onChange={(e) => setAiPastedOutput(e.target.value)}
+                              placeholder="=== כרטיסייה ===&#10;סוג: פתיח&#10;טקסט: שלום לכולם...&#10;&#10;או פסקאות מתוך תסריט מלא..."
+                              className={`w-full min-h-[120px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed font-sans border ${
+                                isDarkMode
+                                  ? 'bg-[#1e1e24] text-zinc-200 border-zinc-800 focus:border-indigo-500'
+                                  : 'bg-zinc-50 text-zinc-800 border-zinc-200 focus:border-indigo-400'
+                              }`}
+                            />
+                          </div>
+
+                          {/* Target distribution select */}
+                          <div className="flex flex-col gap-1.5">
+                            <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                              יעד פריסת המידע במערכת:
+                            </label>
+                            <div className="flex gap-4 items-center">
+                              <label className="flex items-center gap-1.5 text-xs font-bold cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="aiTargetType"
+                                  checked={aiTargetType === 'cards'}
+                                  onChange={() => setAiTargetType('cards')}
+                                  className="accent-indigo-500 cursor-pointer"
+                                />
+                                <span>כרטיסיות דיון מובנות 🎴</span>
+                              </label>
+                              <label className="flex items-center gap-1.5 text-xs font-bold cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="aiTargetType"
+                                  checked={aiTargetType === 'text'}
+                                  onChange={() => setAiTargetType('text')}
+                                  className="accent-indigo-500 cursor-pointer"
+                                />
+                                <span>תסריט מלא רציף 📝</span>
+                              </label>
+                            </div>
+                          </div>
+
+                          {/* Central Trigger Action Button */}
+                          <button
+                            onClick={() => {
+                              if (!aiPastedOutput.trim()) {
+                                alert('אנא הדביקו קודם כל את הפלט מג׳מיני או טענו קובץ טקסט.');
+                                return;
+                              }
+
+                              const hasExistingData = aiTargetType === 'cards'
+                                ? scriptCards.length > 0
+                                : scriptContent.trim().length > 0;
+
+                              if (hasExistingData) {
+                                const confirmOverwrite = window.confirm(
+                                  aiTargetType === 'cards'
+                                    ? 'שים לב, פעולה זו תעדכן ותחליף את כרטיסיות הטקסט הנוכחיות בתוצרים שחולצו מג׳מיני. האם לאשר?'
+                                    : 'שים לב, פעולה זו תעדכן ותחליף את התסריט הנוכחי בתוצרים שחולצו מג׳מיני. האם לאשר?'
+                                );
+                                if (!confirmOverwrite) {
+                                  return;
+                                }
+                              }
+
+                              const inputText = aiPastedOutput;
+
+                              if (aiTargetType === 'text') {
+                                setScriptContent(inputText);
+                                setScriptMode('text');
+                                alert('התסריט הועבר בהצלחה למערכת ההקלטה!');
+                              } else {
+                                const parsedCards: ScriptCard[] = [];
+                                const lines = inputText.split('\n');
+
+                                // Look for card boundary separators
+                                const hasCardDelimiters = lines.some(line =>
+                                  line.includes('=== כרטיסייה') ||
+                                  line.includes('=== כרטיסיה') ||
+                                  line.trim().startsWith('כרטיסייה') ||
+                                  line.trim().startsWith('כרטיסיה') ||
+                                  line.trim().startsWith('כרטיסיית ניווט') ||
+                                  line.trim().startsWith('[כרטיסייה')
+                                );
+
+                                if (hasCardDelimiters) {
+                                  let currentType: 'intro' | 'body' | 'outro' = 'body';
+                                  let currentTextLines: string[] = [];
+
+                                  const saveCard = () => {
+                                    const cardText = currentTextLines.join('\n').trim();
+                                    if (cardText) {
+                                      parsedCards.push({
+                                        id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                                        type: currentType,
+                                        text: cardText
+                                      });
+                                    }
+                                    currentTextLines = [];
+                                  };
+
+                                  for (let i = 0; i < lines.length; i++) {
+                                    const line = lines[i].trim();
+                                    const isDelimiter = line.includes('=== כרטיסייה') ||
+                                                        line.includes('=== כרטיסיה') ||
+                                                        line.match(/^כרטיסייה\s*\d+/i) ||
+                                                        line.match(/^כרטיסיה\s*\d+/i) ||
+                                                        line.match(/^\[כרטיסייה/) ||
+                                                        line.startsWith('כרטיסיית ניווט');
+
+                                    if (isDelimiter) {
+                                      saveCard();
+                                      if (line.includes('פתיח') || line.toLowerCase().includes('intro')) {
+                                        currentType = 'intro';
+                                      } else if (line.includes('סיכום') || line.includes('סיום') || line.toLowerCase().includes('outro') || line.toLowerCase().includes('conclusion')) {
+                                        currentType = 'outro';
+                                      } else {
+                                        currentType = 'body';
+                                      }
+                                    } else {
+                                      if (line.startsWith('סוג:') || line.startsWith('סוג כרטיסייה:') || line.startsWith('סוג כרטיסיה:')) {
+                                        const typeVal = line.split(':')[1].trim();
+                                        if (typeVal.includes('פתיח')) currentType = 'intro';
+                                        else if (typeVal.includes('סיכום') || typeVal.includes('סיום')) currentType = 'outro';
+                                        else currentType = 'body';
+                                      } else if (line.startsWith('טקסט:') || line.startsWith('תוכן:')) {
+                                        const textVal = line.substring(line.indexOf(':') + 1).trim();
+                                        if (textVal) {
+                                          currentTextLines.push(textVal);
+                                        }
+                                      } else {
+                                        if (lines[i]) {
+                                          currentTextLines.push(lines[i]);
+                                        }
+                                      }
+                                    }
+                                  }
+                                  saveCard();
+                                }
+
+                                // Prefix split fallback
+                                if (parsedCards.length === 0) {
+                                  let currentType: 'intro' | 'body' | 'outro' = 'body';
+                                  let currentTextLines: string[] = [];
+
+                                  const saveCard = () => {
+                                    const cardText = currentTextLines.join('\n').trim();
+                                    if (cardText) {
+                                      parsedCards.push({
+                                        id: `card-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                                        type: currentType,
+                                        text: cardText
+                                      });
+                                    }
+                                    currentTextLines = [];
+                                  };
+
+                                  for (let i = 0; i < lines.length; i++) {
+                                    const line = lines[i].trim();
+                                    if (!line) continue;
+
+                                    const isIntro = line.startsWith('פתיח:') || line.startsWith('[פתיח') || line.toLowerCase().startsWith('intro:');
+                                    const isOutro = line.startsWith('סיכום:') || line.startsWith('סיום:') || line.startsWith('[סיכום') || line.toLowerCase().startsWith('outro:') || line.toLowerCase().startsWith('conclusion:');
+                                    const isBody = line.startsWith('גוף הדיון:') || line.startsWith('גוף:') || line.startsWith('[גוף') || line.toLowerCase().startsWith('body:');
+
+                                    if (isIntro || isOutro || isBody) {
+                                      saveCard();
+                                      currentType = isIntro ? 'intro' : isOutro ? 'outro' : 'body';
+                                      const content = line.substring(line.indexOf(':') + 1).trim();
+                                      if (content) {
+                                        currentTextLines.push(content);
+                                      }
+                                    } else {
+                                      currentTextLines.push(lines[i]);
+                                    }
+                                  }
+                                  saveCard();
+                                }
+
+                                // Paragraph fallback
+                                if (parsedCards.length === 0) {
+                                  const paragraphs = inputText.split(/\n\s*\n/);
+                                  paragraphs.forEach((para, idx) => {
+                                    const text = para.trim();
+                                    if (text) {
+                                      let type: 'intro' | 'body' | 'outro' = 'body';
+                                      if (idx === 0) type = 'intro';
+                                      else if (idx === paragraphs.length - 1) type = 'outro';
+
+                                      parsedCards.push({
+                                        id: `card-${Date.now()}-${idx}`,
+                                        type,
+                                        text
+                                      });
+                                    }
+                                  });
+                                }
+
+                                if (parsedCards.length > 0) {
+                                  setScriptCards(parsedCards);
+                                  setActiveCardIndex(0);
+                                  setScriptMode('cards');
+                                  alert(`הפקת בהצלחה ${parsedCards.length} כרטיסיות דיון!`);
+                                } else {
+                                  alert('לא הצלחנו לפענח כרטיסיות מהטקסט שהוזן. ודאו שהטקסט בפורמט הנכון.');
+                                }
+                              }
+
+                              // Auto-close the assistant upon successful injection
+                              setIsAiAssistantOpen(false);
+                            }}
+                            className="w-full mt-1 py-3 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-xs sm:text-sm"
+                          >
+                            <ArrowRightLeft className="w-4 h-4 text-indigo-200" />
+                            <span>חלץ, פרק והזרק למערכת ההקלטה</span>
+                          </button>
+
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+
                   {/* Cards interface */}
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
@@ -1873,8 +2863,8 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Cards list - container expands dynamically to the bottom of the right panel */}
-                  <div className="flex flex-col gap-3 flex-1 overflow-y-auto min-h-[300px] pr-1">
+                  {/* Cards list - constrained height with internal scroll to keep controls and footer reachable */}
+                  <div className="flex flex-col gap-3 max-h-[520px] md:max-h-[580px] overflow-y-auto pr-1 pb-6">
                     {scriptCards.length === 0 ? (
                       <div className={`py-12 px-4 border-2 border-dashed rounded-xl text-center ${
                         isDarkMode ? 'border-[#373743]' : 'border-zinc-200'
@@ -2261,11 +3251,15 @@ export default function App() {
                                   key={wordObj.index}
                                   id={`word-${wordObj.index}`}
                                   onClick={() => setActiveWordIndex(wordObj.index)}
-                                  className={`transition-all duration-200 rounded px-2 py-1 inline-block mx-1 cursor-pointer ${
+                                  className={`transition-all duration-200 rounded px-1.5 py-0.5 inline-block mx-1 cursor-pointer ${
                                     isCurrent
                                       ? (isDarkMode ? 'text-black bg-white scale-110 shadow-lg font-black' : 'text-white bg-zinc-850 scale-110 shadow font-black')
                                       : isPast
                                       ? (isDarkMode ? 'text-zinc-700 font-bold' : 'text-zinc-300 font-bold')
+                                      : wordObj.isSpeakerInstruction
+                                      ? (isDarkMode ? 'text-amber-400 bg-amber-500/5 italic font-medium' : 'text-amber-700/90 bg-amber-500/5 italic font-medium')
+                                      : wordObj.isGeneralInstruction
+                                      ? (isDarkMode ? 'text-indigo-300 bg-indigo-500/10 italic font-semibold border-b border-dashed border-indigo-500/30 text-[0.9em]' : 'text-indigo-800 bg-indigo-50 italic font-semibold border-b border-dashed border-indigo-300 text-[0.9em]')
                                       : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-800 hover:text-zinc-950')
                                   }`}
                                 >
@@ -2327,12 +3321,20 @@ export default function App() {
                 <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 ${
                   isDarkMode ? 'bg-[#1c1c22] text-zinc-500' : 'bg-zinc-100 text-zinc-400'
                 }`}>
-                  <Scissors className="w-6 h-6" />
+                  <Scissors className="w-6 h-6 animate-pulse" />
                 </div>
                 <h4 className={`text-base font-bold mb-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-700'}`}>אין קטעי קול בפרויקט</h4>
-                <p className={`text-sm max-w-sm leading-normal ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                <p className={`text-sm max-w-sm leading-normal mb-6 ${isDarkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
                   השתמש/י בכפתורי ההקלטה למעלה או העלה/י קבצים קיימים כדי להתחיל לערוך ולמזג את ההסכת שלך.
                 </p>
+                <button
+                  id="add-music-empty-btn"
+                  onClick={() => setIsFreesoundModalOpen(true)}
+                  className="bg-indigo-600 hover:bg-indigo-700 hover:scale-[1.02] text-white font-bold py-3 px-6 rounded-xl shadow-lg transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer text-xs sm:text-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>➕ הוסף פתיח, מעבר או אפקט מוזיקלי</span>
+                </button>
               </div>
             ) : (
               <div className="flex flex-col gap-5">
@@ -2368,7 +3370,9 @@ export default function App() {
                       
                       {/* Drag Edge Handle / Visual Indicator */}
                       <div className={`absolute right-0 top-0 bottom-0 w-1.5 rounded-r-xl pointer-events-none ${
-                        isDarkMode ? 'bg-[#ffcc00]' : 'bg-zinc-400'
+                        track.isEffect 
+                          ? (isDarkMode ? 'bg-purple-500' : 'bg-purple-400')
+                          : (isDarkMode ? 'bg-[#ffcc00]' : 'bg-zinc-400')
                       }`} />
 
                       {/* Track Header & Names & Move Control */}
@@ -2487,13 +3491,6 @@ export default function App() {
                         isDarkMode ? 'bg-[#1c1c22]/30' : 'bg-zinc-200/40'
                       }`}>
                         
-                        <div className="flex justify-between items-center text-sm font-bold">
-                          <span className={isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}>חיתוך קצוות (עריכה):</span>
-                          <span className={isDarkMode ? 'text-zinc-300' : 'text-zinc-700'}>
-                            אורך לאחר חיתוך: <b className="font-bold">{trimmedDuration.toFixed(1)} שניות</b> מתוך {track.duration.toFixed(1)} שניות
-                          </span>
-                        </div>
-
                         {/* Premium direct manipulation TrackTimeline component */}
                         <TrackTimeline
                           track={track}
@@ -2540,6 +3537,22 @@ export default function App() {
                   );
                 })}
 
+                {/* Migrating "+" Button as the final element in the tracks list */}
+                <div className="flex justify-center mt-4 pt-2 border-t border-dashed border-zinc-700/20">
+                  <button
+                    id="add-music-migrating-btn"
+                    onClick={() => setIsFreesoundModalOpen(true)}
+                    className={`w-full py-4 px-6 rounded-xl border-2 border-dashed font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer ${
+                      isDarkMode
+                        ? 'border-indigo-500/40 bg-indigo-500/5 hover:bg-indigo-500/15 text-indigo-300 hover:border-indigo-400'
+                        : 'border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:border-indigo-500'
+                    }`}
+                  >
+                    <Plus className="w-5 h-5 text-indigo-500" />
+                    <span>➕ הוסף פתיח, מעבר או אפקט מוזיקלי (Freesound)</span>
+                  </button>
+                </div>
+
               </div>
             )}
 
@@ -2560,9 +3573,9 @@ export default function App() {
 
             <button
               onClick={mergePodcastTracks}
-              disabled={isMerging || tracks.length === 0}
+              disabled={isMerging || tracks.length === 0 || !hasUnmergedChanges}
               className={`w-full py-4 rounded-xl font-bold transition-all shadow text-base flex items-center justify-center gap-2 cursor-pointer ${
-                tracks.length === 0
+                tracks.length === 0 || !hasUnmergedChanges
                   ? (isDarkMode ? 'bg-[#1c1c22] text-zinc-600' : 'bg-zinc-200 text-zinc-400')
                   : isMerging
                   ? (isDarkMode ? 'bg-[#2d2d37] text-zinc-400' : 'bg-zinc-300 text-zinc-600')
@@ -2573,6 +3586,11 @@ export default function App() {
                 <>
                   <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                   <span>ממזג, חותך ומחבר את קטעי השמע...</span>
+                </>
+              ) : !hasUnmergedChanges ? (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  <span>ההסכת מעודכן ומוזג בהצלחה</span>
                 </>
               ) : (
                 <>
@@ -2689,6 +3707,214 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Freesound Assets Modal */}
+      {isFreesoundModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsFreesoundModalOpen(false)}
+          />
+          
+          {/* Modal Container */}
+          <div className={`relative w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden border transition-colors duration-300 ${
+            isDarkMode 
+              ? 'bg-[#1e1e24] border-zinc-700/50 text-zinc-100' 
+              : 'bg-white border-zinc-200 text-zinc-800'
+          }`} style={{ direction: 'rtl' }}>
+            
+            {/* Modal Header */}
+            <div className={`flex items-center justify-between p-4 border-b ${
+              isDarkMode ? 'border-zinc-700/40 bg-[#16161b]' : 'border-zinc-200 bg-zinc-50'
+            }`}>
+              <div className="flex items-center gap-2">
+                <Music className="w-5 h-5 text-indigo-500 animate-pulse" />
+                <h3 className="text-base sm:text-lg font-bold">🎵 מאגר קטעי קול ומוזיקה לפודקאסט</h3>
+              </div>
+              <button
+                onClick={() => setIsFreesoundModalOpen(false)}
+                className={`p-2 rounded-lg transition-all text-xs cursor-pointer ${
+                  isDarkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'
+                }`}
+              >
+                ✕ סגור
+              </button>
+            </div>
+
+            {/* Category Tabs (Filter Buttons) */}
+            <div className={`p-4 flex flex-col sm:flex-row items-center gap-4 justify-between border-b ${
+              isDarkMode ? 'border-zinc-700/30' : 'border-zinc-100'
+            }`}>
+              <div className={`flex rounded-xl p-1 gap-1 shrink-0 ${isDarkMode ? 'bg-zinc-950/60' : 'bg-zinc-100'}`}>
+                <button
+                  onClick={() => {
+                    setFreesoundCategory('intro');
+                    setFreesoundSearchQuery('');
+                  }}
+                  className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    freesoundCategory === 'intro'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
+                  }`}
+                >
+                  <span>🎵 אות פתיחה (Intro)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setFreesoundCategory('transition');
+                    setFreesoundSearchQuery('');
+                  }}
+                  className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    freesoundCategory === 'transition'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
+                  }`}
+                >
+                  <span>✨ מנגינת מעבר (Transition)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setFreesoundCategory('outro');
+                    setFreesoundSearchQuery('');
+                  }}
+                  className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    freesoundCategory === 'outro'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
+                  }`}
+                >
+                  <span>🎬 אות סיום (Outro)</span>
+                </button>
+              </div>
+
+              {/* Search Box */}
+              <div className="relative w-full sm:max-w-xs">
+                <input
+                  type="text"
+                  placeholder="חיפוש חופשי ב-Freesound..."
+                  value={freesoundSearchQuery}
+                  onChange={(e) => setFreesoundSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery);
+                    }
+                  }}
+                  className={`w-full py-2 pl-3 pr-9 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all ${
+                    isDarkMode 
+                      ? 'bg-zinc-900 text-zinc-100 placeholder-zinc-500 border border-zinc-700/50' 
+                      : 'bg-zinc-50 text-zinc-800 placeholder-zinc-400 border border-zinc-300'
+                  }`}
+                />
+                <button
+                  onClick={() => fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery)}
+                  className="absolute right-2.5 top-2.5 text-zinc-500 hover:text-zinc-300 cursor-pointer flex items-center justify-center"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Results Body */}
+            <div className="flex-1 overflow-y-auto p-4 min-h-[300px]">
+              
+              {freesoundLoading ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+                  <p className={`text-xs font-bold ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                    טוען קבצי שמע מ-Freesound...
+                  </p>
+                </div>
+              ) : freesoundResults.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <AlertCircle className={`w-12 h-12 mb-4 ${isDarkMode ? 'text-zinc-700' : 'text-zinc-300'}`} />
+                  <p className={`text-sm font-bold mb-2 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                    לא נמצאו תוצאות או שהשירות אינו זמין
+                  </p>
+                  <p className="text-xs text-zinc-500 max-w-sm">
+                    ייתכן שלא ימצאו תוצאות. מומלץ להשתמש באפשרות "העלאת קבצים" כדי להוסיף קבצי קול משלכם.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {freesoundResults.map((hit, index) => {
+                    const isPreviewPlaying = previewPlayingId === hit.id;
+                    const durationText = hit.duration ? `${Math.floor(hit.duration)} שניות` : 'שמע';
+                    const tagsList = (hit.tags && hit.tags.length > 0) ? hit.tags.slice(0, 3).join(', ') : 'שמע';
+
+                    return (
+                      <div
+                        key={`${hit.id}-${index}`}
+                        className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
+                          isDarkMode
+                            ? 'bg-[#272733]/40 hover:bg-[#272733]/80 border-zinc-700/30'
+                            : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200'
+                        }`}
+                      >
+                        {/* Audio Details */}
+                        <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+                          {/* Play/Preview Button */}
+                          <button
+                            onClick={() => togglePreviewAudio(hit.id, hit.previews['preview-hq-mp3'] || hit.previews['preview-lq-mp3'])}
+                            className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow transition-all cursor-pointer ${
+                              isPreviewPlaying
+                                ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                            }`}
+                            title={isPreviewPlaying ? "עצור השמעה" : "השמעת דוגמה"}
+                          >
+                            {isPreviewPlaying ? (
+                              <Pause className="w-4 h-4 fill-current" />
+                            ) : (
+                              <Play className="w-4 h-4 fill-current mr-0.5" />
+                            )}
+                          </button>
+
+                          <div className="flex flex-col text-right">
+                            <span className="font-bold text-xs sm:text-sm line-clamp-1" title={hit.name}>
+                              {hit.name || tagsList}
+                            </span>
+                            <span className={`text-[10px] sm:text-xs font-bold mt-0.5 ${
+                              isDarkMode ? 'text-zinc-500' : 'text-zinc-500'
+                            }`}>
+                              ⏱️ משך: {durationText} | יוצר: {hit.username || 'Freesound'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Add to project Button */}
+                        <button
+                          onClick={() => handleAddFreesoundTrack(hit)}
+                          className={`w-full sm:w-auto px-4 py-2 rounded-lg font-bold text-xs shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${
+                            isDarkMode
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                          }`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>הוסף לפרויקט</span>
+                        </button>
+
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className={`p-3 text-center text-[10px] font-bold select-none border-t ${
+              isDarkMode ? 'border-zinc-700/30 bg-[#16161b]' : 'border-zinc-200 bg-zinc-50'
+            }`}>
+              <p className={isDarkMode ? 'text-zinc-500' : 'text-zinc-400'}>
+                כל קטעי השמע במאגר מסופקים ברישיון חופשי לשימוש באדיבות Freesound API.
+              </p>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

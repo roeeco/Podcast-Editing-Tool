@@ -100,11 +100,11 @@ export const TrackTimeline: React.FC<TrackTimelineProps> = ({ track, onTrimChang
   const themeInputBg = isDarkMode ? 'bg-zinc-900 text-zinc-100' : 'bg-zinc-200/70 text-zinc-900';
 
   return (
-    <div className="flex flex-col gap-3 w-full">
+    <div className="flex flex-col w-full pb-10">
       {/* Waveform and Trimming Handles Container */}
       <div 
         ref={containerRef}
-        className={`relative w-full h-20 ${themeBg} rounded-xl overflow-visible select-none mt-2 flex items-center`}
+        className={`relative w-full h-10 ${themeBg} rounded-xl overflow-visible select-none mt-2 flex items-center`}
       >
         {/* Background stylized grid lines for depth */}
         <div className="absolute inset-0 grid grid-cols-6 h-full w-full opacity-5 pointer-events-none">
@@ -114,7 +114,7 @@ export const TrackTimeline: React.FC<TrackTimelineProps> = ({ track, onTrimChang
         </div>
 
         {/* Muted background wave bars */}
-        <div className="absolute inset-x-0 h-12 flex items-center justify-between px-4 pointer-events-none">
+        <div className="absolute inset-x-0 h-6 flex items-center justify-between px-4 pointer-events-none">
           {waveformBars.map((height, idx) => {
             const barRatio = idx / waveformBars.length;
             const barTime = barRatio * track.duration;
@@ -161,85 +161,28 @@ export const TrackTimeline: React.FC<TrackTimelineProps> = ({ track, onTrimChang
 
         {/* --- START DRAG HANDLE (Right edge of active) --- */}
         <div 
-          className="absolute top-1/2 -translate-y-1/2 -mr-4 z-20 flex flex-col items-center group cursor-ew-resize select-none"
+          className="absolute top-full z-20 flex flex-col items-end group cursor-ew-resize select-none"
           style={{ right: `${startPercent}%` }}
           onMouseDown={(e) => startDrag('start', e)}
           onTouchStart={(e) => startTouchDrag('start', e)}
         >
-          {/* Time display indicator above */}
-          <span className={`absolute -top-8 text-xs font-bold ${themeLabelBg} px-2 py-1 rounded shadow-md pointer-events-none select-none transition-transform group-hover:scale-105`}>
-            {track.trimStart.toFixed(1)}s
-          </span>
-
-          {/* Elegant Circular Knob with Inner Glow */}
-          <div className={`w-8 h-8 rounded-full ${themeKnobBg} shadow-md flex items-center justify-center transition-all group-hover:scale-105 group-active:scale-95`}>
-            <div className={`w-2.5 h-2.5 rounded-full ${themeKnobDot}`} />
+          <div className={`mt-1 px-2.5 py-1 ${themeLabelBg} shadow-sm rounded-b-md rounded-tl-md flex items-center gap-1.5 transition-transform group-hover:scale-105 group-active:scale-95 border ${isDarkMode ? 'border-zinc-700' : 'border-zinc-300'}`}>
+            <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">התחלה</span>
+            <span className="text-xs font-bold">{track.trimStart.toFixed(1)}s</span>
           </div>
-
-          {/* Indicator Label */}
-          <span className="text-[10px] font-bold uppercase tracking-wider mt-1.5 select-none pointer-events-none bg-zinc-500/10 px-1.5 py-0.5 rounded">
-            התחלה
-          </span>
         </div>
 
         {/* --- END DRAG HANDLE (Left edge of active) --- */}
         <div 
-          className="absolute top-1/2 -translate-y-1/2 -ml-4 z-20 flex flex-col items-center group cursor-ew-resize select-none"
-          style={{ right: `${endPercent}%` }}
+          className="absolute top-full z-20 flex flex-col items-start group cursor-ew-resize select-none"
+          style={{ left: `${100 - endPercent}%` }}
           onMouseDown={(e) => startDrag('end', e)}
           onTouchStart={(e) => startTouchDrag('end', e)}
         >
-          {/* Time display indicator above */}
-          <span className={`absolute -top-8 text-xs font-bold ${themeLabelBg} px-2 py-1 rounded shadow-md pointer-events-none select-none transition-transform group-hover:scale-105`}>
-            {track.trimEnd.toFixed(1)}s
-          </span>
-
-          {/* Elegant Circular Knob with Inner Glow */}
-          <div className={`w-8 h-8 rounded-full ${themeKnobBg} shadow-md flex items-center justify-center transition-all group-hover:scale-105 group-active:scale-95`}>
-            <div className={`w-2.5 h-2.5 rounded-full ${themeKnobDot}`} />
+          <div className={`mt-1 px-2.5 py-1 ${themeLabelBg} shadow-sm rounded-b-md rounded-tr-md flex items-center gap-1.5 transition-transform group-hover:scale-105 group-active:scale-95 border ${isDarkMode ? 'border-zinc-700' : 'border-zinc-300'}`}>
+            <span className="text-xs font-bold">{track.trimEnd.toFixed(1)}s</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">סיום</span>
           </div>
-
-          {/* Indicator Label */}
-          <span className="text-[10px] font-bold uppercase tracking-wider mt-1.5 select-none pointer-events-none bg-zinc-500/10 px-1.5 py-0.5 rounded">
-            סיום
-          </span>
-        </div>
-      </div>
-
-      {/* Manual precise number inputs underneath as requested helper */}
-      <div className={`flex items-center justify-between gap-4 px-1 mt-1 text-sm ${themeTextMuted}`}>
-        <div className="flex items-center gap-2">
-          <span>זמן חיתוך התחלה:</span>
-          <input
-            type="number"
-            min="0"
-            max={track.trimEnd - 0.1}
-            step="0.1"
-            value={Number(track.trimStart.toFixed(1))}
-            onChange={(e) => {
-              const val = Math.max(0, Math.min(track.trimEnd - 0.1, Number(e.target.value)));
-              onTrimChange(track.id, val, track.trimEnd);
-            }}
-            className={`w-16 ${themeInputBg} rounded px-2 py-1 text-center font-bold text-sm focus:outline-none`}
-          />
-          <span>שניות</span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span>זמן חיתוך סיום:</span>
-          <input
-            type="number"
-            min={track.trimStart + 0.1}
-            max={track.duration}
-            step="0.1"
-            value={Number(track.trimEnd.toFixed(1))}
-            onChange={(e) => {
-              const val = Math.max(track.trimStart + 0.1, Math.min(track.duration, Number(e.target.value)));
-              onTrimChange(track.id, track.trimStart, val);
-            }}
-            className={`w-16 ${themeInputBg} rounded px-2 py-1 text-center font-bold text-sm focus:outline-none`}
-          />
-          <span>שניות</span>
         </div>
       </div>
     </div>
