@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import JSZip from 'jszip';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'motion/react';
 import {
   Mic,
@@ -559,6 +560,8 @@ export default function App() {
   const [mergedUrl, setMergedUrl] = useState<string | null>(null);
   const [mergedDuration, setMergedDuration] = useState<number>(0);
   const [isMergedPlayerPlaying, setIsMergedPlayerPlaying] = useState<boolean>(false);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isImporting, setIsImporting] = useState<boolean>(false);
   const mergedAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -1752,6 +1755,176 @@ export default function App() {
     }
   };
 
+  // Export entire project as ZIP file containing metadata + raw audio tracks
+  const exportProjectToZip = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      const zip = new JSZip();
+
+      // Create tracks metadata list
+      const tracksMetadata = tracks.map(t => ({
+        id: t.id,
+        name: t.name,
+        duration: t.duration,
+        trimStart: t.trimStart,
+        trimEnd: t.trimEnd,
+        volume: t.volume,
+        isEffect: t.isEffect || false,
+        mimeType: t.blob.type
+      }));
+
+      const projectData = {
+        version: 1,
+        podcastName,
+        participants,
+        scriptContent,
+        scriptMode,
+        scriptCards,
+        activeCardIndex,
+        aiStudentNotes,
+        aiStructure,
+        aiOutputFormat,
+        aiDuration,
+        aiArchetype,
+        tracks: tracksMetadata
+      };
+
+      // Add project data JSON to zip
+      zip.file("project.json", JSON.stringify(projectData, null, 2));
+
+      // Add each audio track blob
+      const audioFolder = zip.folder("audio");
+      if (audioFolder) {
+        for (const track of tracks) {
+          audioFolder.file(`${track.id}`, track.blob);
+        }
+      }
+
+      // Generate the ZIP file blob
+      const content = await zip.generateAsync({ type: "blob" });
+
+      // Create a download link
+      const url = URL.createObjectURL(content);
+      const link = document.createElement("a");
+      const sanitizedPodcastName = (podcastName || "הסכת_ללא_שם").trim().replace(/[^a-zA-Z0-9א-ת_-]/g, "_");
+      link.href = url;
+      link.download = `${sanitizedPodcastName}_גיבוי_סטודיו_${new Date().toISOString().split('T')[0]}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setSuccessMsg('🏆 הפרויקט יוצא בהצלחה כקובץ גיבוי ZIP! תוכלו להעלות אותו מחדש בכל זמן.');
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(`שגיאה ביצוא הפרויקט: ${err.message || err}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Import and reconstruct entire project from ZIP file
+  const importProjectFromZip = async (file: File) => {
+    if (isImporting) return;
+    setIsImporting(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      const zip = await JSZip.loadAsync(file);
+      
+      // 1. Read project.json
+      const projectJsonFile = zip.file("project.json");
+      if (!projectJsonFile) {
+        throw new Error("קובץ project.json לא נמצא בתוך ה-ZIP. ודא/י שזהו קובץ גיבוי תקין של המערכת.");
+      }
+
+      const projectJsonText = await projectJsonFile.async("text");
+      const metadata = JSON.parse(projectJsonText);
+
+      if (!metadata.tracks || !Array.isArray(metadata.tracks)) {
+        throw new Error("מבנה קובץ הגיבוי אינו תקין (חסר מידע על רצועות שמע).");
+      }
+
+      // 2. Load audio files and decode them
+      const importedTracks: PodcastTrack[] = [];
+      
+      for (const trackMeta of metadata.tracks) {
+        const audioFile = zip.file(`audio/${trackMeta.id}`);
+        if (!audioFile) {
+          console.warn(`קובץ השמע עבור רצועה ${trackMeta.id} לא נמצא ב-ZIP, מדלג...`);
+          continue;
+        }
+
+        const audioBlob = await audioFile.async("blob");
+        // Re-type the blob according to metadata
+        const typedBlob = new Blob([audioBlob], { type: trackMeta.mimeType || "audio/wav" });
+
+        // Decode into AudioBuffer for Web Audio API actions
+        const audioBuffer = await decodeFileToBuffer(typedBlob);
+
+        importedTracks.push({
+          id: trackMeta.id,
+          name: trackMeta.name,
+          blob: typedBlob,
+          audioUrl: URL.createObjectURL(typedBlob),
+          audioBuffer: audioBuffer,
+          duration: trackMeta.duration,
+          trimStart: trackMeta.trimStart,
+          trimEnd: trackMeta.trimEnd,
+          volume: trackMeta.volume,
+          isEffect: trackMeta.isEffect
+        });
+      }
+
+      // 3. Clear existing states and tracks
+      tracks.forEach(t => {
+        if (t.audioUrl) {
+          URL.revokeObjectURL(t.audioUrl);
+        }
+      });
+
+      if (mergedUrl) {
+        URL.revokeObjectURL(mergedUrl);
+      }
+      setMergedUrl(null);
+      setMergedBlob(null);
+      setMergedDuration(0);
+      setIsMergedPlayerPlaying(false);
+      if (mergedAudioRef.current) {
+        mergedAudioRef.current.pause();
+        mergedAudioRef.current = null;
+      }
+
+      // 4. Update settings state
+      setPodcastName(metadata.podcastName || '');
+      setParticipants(metadata.participants || '');
+      setScriptContent(metadata.scriptContent || '');
+      setScriptMode(metadata.scriptMode || 'text');
+      setScriptCards(metadata.scriptCards || []);
+      setActiveCardIndex(metadata.activeCardIndex || 0);
+      setAiStudentNotes(metadata.aiStudentNotes || '');
+      setAiStructure(metadata.aiStructure || '');
+      setAiOutputFormat(metadata.aiOutputFormat || '');
+      setAiDuration(metadata.aiDuration || '');
+      setAiArchetype(metadata.aiArchetype || '');
+
+      // Set tracks
+      setTracks(importedTracks);
+
+      setSuccessMsg('🏆 הפרויקט יובא ושוחזר בהצלחה! כל ההקלטות, הקיטועים וכרטיסיות השיחה עודכנו במלואן.');
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(`שגיאה ביבוא הפרויקט: ${err.message || err}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   // Card swipe gesture handlers
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [touchEndX, setTouchEndX] = useState<number | null>(null);
@@ -1906,10 +2079,57 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-6">
-            <div className="hidden sm:flex flex-col items-end">
-              <span className="text-xs uppercase tracking-widest text-zinc-500">תאריך פרויקט</span>
-              <span className="font-bold text-sm text-zinc-300">{new Date().toLocaleDateString('he-IL')}</span>
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Import / Upload Backup Button */}
+            <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2a2a37] hover:bg-[#323242] text-zinc-300 hover:text-white text-xs font-bold border border-zinc-700/40 cursor-pointer transition-all">
+              {isImporting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+              ) : (
+                <Upload className="w-3.5 h-3.5 text-[#ffcc00]" />
+              )}
+              <span className="hidden xs:inline">טעינת גיבוי (ZIP)</span>
+              <span className="xs:hidden inline">טעינה</span>
+              <input
+                type="file"
+                accept=".zip"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    importProjectFromZip(file);
+                  }
+                }}
+                className="hidden"
+                disabled={isImporting}
+              />
+            </label>
+
+            {/* Export / Download Backup Button */}
+            <button
+              onClick={exportProjectToZip}
+              disabled={isExporting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2a2a37] hover:bg-[#323242] text-zinc-300 hover:text-white text-xs font-bold border border-zinc-700/40 cursor-pointer transition-all disabled:opacity-50"
+            >
+              {isExporting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5 text-[#ffcc00]" />
+              )}
+              <span className="hidden xs:inline">שמירת גיבוי (ZIP)</span>
+              <span className="xs:hidden inline">שמירה</span>
+            </button>
+
+            {/* Clear Project Button */}
+            <button
+              onClick={handleClearProject}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#301c22] hover:bg-rose-950/40 text-rose-300 hover:text-rose-200 text-xs font-bold border border-rose-900/30 cursor-pointer transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>איפוס</span>
+            </button>
+
+            <div className="hidden lg:flex flex-col items-end border-r border-zinc-850 pr-3.5 mr-0.5">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500">תאריך פרויקט</span>
+              <span className="font-bold text-xs text-zinc-300">{new Date().toLocaleDateString('he-IL')}</span>
             </div>
           </div>
         </div>
