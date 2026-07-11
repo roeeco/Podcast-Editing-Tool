@@ -2721,28 +2721,28 @@ export default function App() {
         }`}>
           <button
             onClick={() => setMainTab('text')}
-            className={`flex-1 rounded-lg font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer ${
+            className={`flex-1 font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer rounded-lg ${
               isScrolled ? 'py-1.5 px-3 text-xs' : 'py-2.5 px-4 text-xs sm:text-sm'
             } ${
               mainTab === 'text'
-                ? 'bg-[#a3a3b3] text-[#121217] shadow-lg shadow-black/30 ring-1 ring-white/10'
-                : 'text-zinc-400 hover:text-zinc-100 hover:bg-[#323242]/50'
+                ? 'bg-[#ffcc00]/10 text-[#ffcc00]'
+                : 'text-zinc-400 hover:text-[#ffcc00] hover:bg-[#ffcc00]/5'
             }`}
           >
-            <FileText className={`transition-colors ${isScrolled ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} ${mainTab === 'text' ? 'text-zinc-950' : 'text-zinc-400'}`} />
+            <FileText className={`transition-colors ${isScrolled ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} ${mainTab === 'text' ? 'text-[#ffcc00]' : 'text-zinc-400'}`} />
             <span className="tracking-wide font-black">עבודה עם הטקסט (תסריט וכרטיסיות)</span>
           </button>
           <button
             onClick={() => setMainTab('tracks')}
-            className={`flex-1 rounded-lg font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer ${
+            className={`flex-1 font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer rounded-lg ${
               isScrolled ? 'py-1.5 px-3 text-xs' : 'py-2.5 px-4 text-xs sm:text-sm'
             } ${
               mainTab === 'tracks'
-                ? 'bg-[#a3a3b3] text-[#121217] shadow-lg shadow-black/30 ring-1 ring-white/10'
-                : 'text-zinc-400 hover:text-zinc-100 hover:bg-[#323242]/50'
+                ? 'bg-emerald-400/10 text-emerald-400'
+                : 'text-zinc-400 hover:text-emerald-400 hover:bg-emerald-400/5'
             }`}
           >
-            <FileAudio className={`transition-colors ${isScrolled ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} ${mainTab === 'tracks' ? 'text-zinc-950' : 'text-zinc-400'}`} />
+            <FileAudio className={`transition-colors ${isScrolled ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} ${mainTab === 'tracks' ? 'text-emerald-400' : 'text-zinc-400'}`} />
             <span className="tracking-wide font-black">רשימת הרצועות והעריכה ({tracks.length})</span>
           </button>
         </div>
