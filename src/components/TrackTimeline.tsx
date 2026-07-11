@@ -10,12 +10,17 @@ interface TrackTimelineProps {
 export const TrackTimeline: React.FC<TrackTimelineProps> = ({ track, onTrimChange, isDarkMode }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Generate unique waveform heights based on the track's id so each track has its own character
+  // Generate unique waveform heights based on the track's id or use real cached peaks
   const waveformBars = useMemo(() => {
-    const seed = track.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     const count = 60;
+    if (track.peaks && track.peaks.length > 0) {
+      // Scale peaks (0..1) to 15..90% for visual aesthetics
+      return track.peaks.map(p => Math.max(15, Math.min(90, p * 85 + 15)));
+    }
+
+    const seed = track.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     return Array.from({ length: count }, (_, i) => {
-      // Use a combination of sine waves for a natural pseudo-random look
+      // Use a combination of sine waves for a natural pseudo-random look as a fallback
       const height = Math.abs(
         Math.sin(i * 0.2 + seed) * 50 + 
         Math.sin(i * 0.5) * 30 + 
@@ -23,7 +28,7 @@ export const TrackTimeline: React.FC<TrackTimelineProps> = ({ track, onTrimChang
       );
       return Math.max(15, Math.min(90, height)); // Clamp between 15% and 90%
     });
-  }, [track.id]);
+  }, [track.id, track.peaks]);
 
   // Handle Dragging calculations
   const calculateTimeFromClientX = (clientX: number): number => {
