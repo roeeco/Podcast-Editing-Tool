@@ -79,7 +79,7 @@ export const ProjectImportExport: React.FC<ProjectImportExportProps> = ({
                 <div>
                   <span className="font-bold text-xs sm:text-sm">{session.name}</span>
                   <span className={`text-[10px] sm:text-xs block sm:inline sm:mr-3 ${isDarkMode ? 'text-zinc-500' : 'text-slate-400'}`}>
-                    {new Date(session.lastUpdated).toLocaleString('he-IL')} ({(session.chunks || []).length} מקטעים)
+                    {new Date(session.lastChunkAt || session.startedAt).toLocaleString('he-IL')} ({session.chunkCount || 0} מקטעים)
                   </span>
                 </div>
                 <div className="flex items-center gap-2 justify-end">

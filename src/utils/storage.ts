@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { RecordingSession, RecordingChunk } from '../types';
 
 const DB_NAME = 'SmbkPodDB';
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = (event) => {
@@ -17,8 +18,25 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('audioData')) {
         db.createObjectStore('audioData', { keyPath: 'id' });
       }
-      if (!db.objectStoreNames.contains('recordingChunks')) {
-        db.createObjectStore('recordingChunks', { keyPath: 'id' });
+
+      if (oldVersion < 3) {
+        if (db.objectStoreNames.contains('recordingChunks')) {
+          db.deleteObjectStore('recordingChunks');
+        }
+        const chunksStore = db.createObjectStore('recordingChunks', { keyPath: 'id' });
+        chunksStore.createIndex('sessionId', 'sessionId', { unique: false });
+
+        if (!db.objectStoreNames.contains('recordingSessions')) {
+          db.createObjectStore('recordingSessions', { keyPath: 'id' });
+        }
+      } else {
+        if (!db.objectStoreNames.contains('recordingSessions')) {
+          db.createObjectStore('recordingSessions', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('recordingChunks')) {
+          const chunksStore = db.createObjectStore('recordingChunks', { keyPath: 'id' });
+          chunksStore.createIndex('sessionId', 'sessionId', { unique: false });
+        }
       }
 
       // Migration from v1 to v2
@@ -54,7 +72,7 @@ function openDB(): Promise<IDBDatabase> {
 export interface StoredTrack {
   id: string;
   name: string;
-  blob: Blob;
+  blob?: Blob;
   duration: number;
   trimStart: number;
   trimEnd: number;
@@ -67,14 +85,8 @@ export interface StoredTrack {
   fadeInDuration?: number;
   fadeOutDuration?: number;
   silenceAfter?: number;
-}
-
-export interface RecordingSession {
-  id: string;
-  name: string;
-  chunks: Blob[];
-  lastUpdated: number;
-  active: boolean;
+  sourceSessionId?: string;
+  isMissingAudio?: boolean;
 }
 
 export async function saveTrackMetadataToDB(track: Omit<StoredTrack, 'blob'>): Promise<void> {
@@ -110,20 +122,15 @@ export async function saveTrackToDB(track: StoredTrack): Promise<void> {
   const db = await openDB();
   const { blob, ...metadata } = track;
 
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('tracks', 'readwrite');
-    const store = tx.objectStore('tracks');
-    const request = store.put(metadata);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(['tracks', 'audioData'], 'readwrite');
+    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => resolve();
 
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('audioData', 'readwrite');
-    const store = tx.objectStore('audioData');
-    const request = store.put({ id: track.id, blob });
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    tx.objectStore('tracks').put(metadata);
+    if (blob) {
+      tx.objectStore('audioData').put({ id: track.id, blob });
+    }
   });
 }
 
@@ -173,6 +180,14 @@ export async function clearTracksFromDB(): Promise<void> {
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('recordingSessions', 'readwrite');
+    const store = tx.objectStore('recordingSessions');
+    const request = store.clear();
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
 }
 
 export async function getAllTracksFromDB(): Promise<StoredTrack[]> {
@@ -204,7 +219,7 @@ export async function getAllTracksFromDB(): Promise<StoredTrack[]> {
     } else {
       tracksWithBlobs.push({
         ...meta,
-        blob: new Blob([], { type: meta.mimeType || 'audio/wav' })
+        isMissingAudio: true
       });
     }
   }
@@ -212,58 +227,112 @@ export async function getAllTracksFromDB(): Promise<StoredTrack[]> {
   return tracksWithBlobs;
 }
 
-export async function saveRecordingChunkToDB(sessionId: string, name: string, chunk: Blob): Promise<void> {
+export async function createRecordingSession(session: RecordingSession): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('recordingSessions', 'readwrite');
+    const store = tx.objectStore('recordingSessions');
+    const request = store.put(session);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function saveRecordingChunk(chunk: RecordingChunk): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('recordingChunks', 'readwrite');
     const store = tx.objectStore('recordingChunks');
-    const getReq = store.get(sessionId);
+    const request = store.put(chunk);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function getRecordingSession(id: string): Promise<RecordingSession | null> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('recordingSessions', 'readonly');
+    const store = tx.objectStore('recordingSessions');
+    const request = store.get(id);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function updateRecordingSession(id: string, patch: Partial<RecordingSession>): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('recordingSessions', 'readwrite');
+    const store = tx.objectStore('recordingSessions');
+    const getReq = store.get(id);
     getReq.onsuccess = () => {
-      let session: RecordingSession = getReq.result;
-      if (!session) {
-        session = {
-          id: sessionId,
-          name,
-          chunks: [],
-          lastUpdated: Date.now(),
-          active: true
-        };
+      const existing = getReq.result;
+      if (existing) {
+        const updated = { ...existing, ...patch };
+        const putReq = store.put(updated);
+        putReq.onsuccess = () => resolve();
+        putReq.onerror = () => reject(putReq.error);
+      } else {
+        reject(new Error(`Session ${id} not found`));
       }
-      session.chunks.push(chunk);
-      session.lastUpdated = Date.now();
-      session.active = true;
-      const putReq = store.put(session);
-      putReq.onsuccess = () => resolve();
-      putReq.onerror = () => reject(putReq.error);
     };
     getReq.onerror = () => reject(getReq.error);
+  });
+}
+
+export async function getChunksForSession(sessionId: string): Promise<RecordingChunk[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('recordingChunks', 'readonly');
+    const store = tx.objectStore('recordingChunks');
+    
+    try {
+      const index = store.index('sessionId');
+      const request = index.getAll(IDBKeyRange.only(sessionId));
+      request.onsuccess = () => {
+        const results: RecordingChunk[] = request.result || [];
+        resolve(results.sort((a, b) => a.index - b.index));
+      };
+      request.onerror = () => reject(request.error);
+    } catch (e) {
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const all: RecordingChunk[] = request.result || [];
+        const filtered = all.filter(c => c.sessionId === sessionId);
+        resolve(filtered.sort((a, b) => a.index - b.index));
+      };
+      request.onerror = () => reject(request.error);
+    }
   });
 }
 
 export async function getPendingRecordingSessions(): Promise<RecordingSession[]> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('recordingChunks', 'readonly');
-    const store = tx.objectStore('recordingChunks');
+    const tx = db.transaction('recordingSessions', 'readonly');
+    const store = tx.objectStore('recordingSessions');
     const request = store.getAll();
     request.onsuccess = () => {
       const all: RecordingSession[] = request.result || [];
-      resolve(all.filter(s => s.active && s.chunks.length > 0));
+      resolve(all.filter(s => s.active && s.chunkCount > 0));
     };
     request.onerror = () => reject(request.error);
   });
 }
 
-export async function finalizeRecordingSession(sessionId: string): Promise<void> {
+export async function markSessionFinalized(sessionId: string, trackId: string): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('recordingChunks', 'readwrite');
-    const store = tx.objectStore('recordingChunks');
+    const tx = db.transaction('recordingSessions', 'readwrite');
+    const store = tx.objectStore('recordingSessions');
     const getReq = store.get(sessionId);
     getReq.onsuccess = () => {
       const session = getReq.result;
       if (session) {
         session.active = false;
+        session.finalizedTrackId = trackId;
+        session.finalizedAt = Date.now();
         const putReq = store.put(session);
         putReq.onsuccess = () => resolve();
         putReq.onerror = () => reject(putReq.error);
@@ -275,14 +344,37 @@ export async function finalizeRecordingSession(sessionId: string): Promise<void>
   });
 }
 
-export async function deleteRecordingSession(sessionId: string): Promise<void> {
+export async function deleteRecordingSessionAndChunks(sessionId: string): Promise<void> {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('recordingChunks', 'readwrite');
+  
+  const chunkIds: string[] = await new Promise((resolve, reject) => {
+    const tx = db.transaction('recordingChunks', 'readonly');
     const store = tx.objectStore('recordingChunks');
-    const request = store.delete(sessionId);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    try {
+      const index = store.index('sessionId');
+      const request = index.getAllKeys(IDBKeyRange.only(sessionId));
+      request.onsuccess = () => resolve((request.result as string[]) || []);
+      request.onerror = () => reject(request.error);
+    } catch (e) {
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const all: RecordingChunk[] = request.result || [];
+        resolve(all.filter(c => c.sessionId === sessionId).map(c => c.id));
+      };
+      request.onerror = () => reject(request.error);
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['recordingSessions', 'recordingChunks'], 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+
+    tx.objectStore('recordingSessions').delete(sessionId);
+    const chunkStore = tx.objectStore('recordingChunks');
+    for (const cid of chunkIds) {
+      chunkStore.delete(cid);
+    }
   });
 }
 

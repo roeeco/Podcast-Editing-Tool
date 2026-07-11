@@ -60,10 +60,14 @@ import {
   projectBackupSchema,
   saveTrackMetadataToDB,
   saveTrackAudioToDB,
-  saveRecordingChunkToDB,
+  createRecordingSession,
+  saveRecordingChunk,
+  getRecordingSession,
+  updateRecordingSession,
+  getChunksForSession,
   getPendingRecordingSessions,
-  finalizeRecordingSession,
-  deleteRecordingSession
+  markSessionFinalized,
+  deleteRecordingSessionAndChunks
 } from './utils/storage';
 
 import { SCRIPT_TEMPLATES } from './data/templates';
@@ -199,51 +203,61 @@ export default function App() {
   const [storageEstimate, setStorageEstimate] = useState<{ usedMb: number; quotaMb: number; pct: number } | null>(null);
   const recordingSessionIdRef = useRef<string | null>(null);
   const recordingStartTimeRef = useRef<number>(0);
+  const recordingChunkIndexRef = useRef<number>(0);
+  const recordingIntervalRef = useRef<any>(null);
 
   const recoverSession = async (session: any) => {
     setIsRecovering(true);
     try {
-      const RECORDING_MIME_CANDIDATES = [
-        'audio/webm;codecs=opus',
-        'audio/ogg;codecs=opus',
-        'audio/mp4;codecs=mp4a.40.2',
-        'audio/mp4',
-        'audio/webm',
-      ];
-      // Choose supported mimeType
-      let mimeType = 'audio/webm';
-      for (const candidate of RECORDING_MIME_CANDIDATES) {
-        if (MediaRecorder.isTypeSupported(candidate)) {
-          mimeType = candidate;
-          break;
-        }
-      }
-
-      // Merge chunks into a single Blob
-      const combinedBlob = new Blob(session.chunks, { type: mimeType });
+      const actualMime = session.mimeType || 'audio/webm';
       
-      // Decode combined Blob to get duration and generate peaks
-      const decodedBuffer = await decodeFileToBuffer(combinedBlob);
-      const duration = decodedBuffer.duration;
-      const peaks = await generateWaveformPeaks(combinedBlob);
+      // Merge chunks into a single Blob by querying IndexedDB
+      const chunks = await getChunksForSession(session.id);
+      if (!chunks || chunks.length === 0) {
+        throw new Error("No recording chunks found for this session.");
+      }
+      
+      const combinedBlob = new Blob(chunks.map(c => c.blob), { type: actualMime });
+      
+      const estimatedDuration = (session.lastChunkAt - session.startedAt) / 1000;
+      let duration = estimatedDuration > 0 ? estimatedDuration : 30;
+      let peaks: number[] = [];
+      let audioBuffer: AudioBuffer | undefined = undefined;
+
+      // Only decode if duration is within 5 minutes to protect browser memory and prevent freezes
+      if (duration <= 300) {
+        try {
+          const decodedBuffer = await decodeFileToBuffer(combinedBlob);
+          duration = decodedBuffer.duration;
+          audioBuffer = decodedBuffer;
+          peaks = await generateWaveformPeaks(combinedBlob);
+        } catch (err) {
+          console.warn("Failed to decode combined blob, falling back to estimation:", err);
+          peaks = Array.from({ length: 100 }, () => 0.5);
+        }
+      } else {
+        peaks = Array.from({ length: 100 }, () => 0.3 + Math.random() * 0.4);
+      }
 
       const recoveredTrack: PodcastTrack = {
         id: `track-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         name: `${session.name} (שוחזר לאחר קריסה)`,
         blob: combinedBlob,
         audioUrl: URL.createObjectURL(combinedBlob),
+        audioBuffer,
         duration: duration,
         trimStart: 0,
         trimEnd: duration,
         volume: 1.0,
-        mimeType,
+        mimeType: actualMime,
         sizeBytes: combinedBlob.size,
-        recordedAt: new Date(session.lastUpdated).toISOString(),
-        peaks
+        recordedAt: new Date(session.lastChunkAt || session.startedAt).toISOString(),
+        peaks,
+        sourceSessionId: session.id
       };
 
       setTracks((prev) => [...prev, recoveredTrack]);
-      await deleteRecordingSession(session.id);
+      await deleteRecordingSessionAndChunks(session.id);
       setPendingSessions((prev) => prev.filter((s) => s.id !== session.id));
       setSuccessMsg('🏆 ההקלטה הבלתי-גמורה שוחזרה בהצלחה לפרויקט שלכם!');
     } catch (err: any) {
@@ -256,7 +270,7 @@ export default function App() {
 
   const discardSession = async (sessionId: string) => {
     try {
-      await deleteRecordingSession(sessionId);
+      await deleteRecordingSessionAndChunks(sessionId);
       setPendingSessions((prev) => prev.filter((s) => s.id !== sessionId));
       setSuccessMsg('ההקלטה הבלתי-גמורה נמחקה בהצלחה.');
     } catch (err) {
@@ -544,7 +558,7 @@ export default function App() {
             id: st.id,
             name: st.name,
             blob: st.blob,
-            audioUrl: URL.createObjectURL(st.blob),
+            audioUrl: st.blob ? URL.createObjectURL(st.blob) : undefined,
             duration: st.duration,
             trimStart: st.trimStart,
             trimEnd: st.trimEnd,
@@ -553,10 +567,12 @@ export default function App() {
             mimeType: st.mimeType,
             recordedAt: st.recordedAt,
             sizeBytes: st.sizeBytes,
-            peaks: st.peaks,
+            peaks: st.peaks || Array.from({ length: 100 }, () => 0.1),
             fadeInDuration: st.fadeInDuration || 0,
             fadeOutDuration: st.fadeOutDuration || 0,
-            silenceAfter: st.silenceAfter || 0
+            silenceAfter: st.silenceAfter || 0,
+            isMissingAudio: st.isMissingAudio,
+            sourceSessionId: st.sourceSessionId
           });
         }
 
@@ -575,7 +591,7 @@ export default function App() {
           // Asynchronously generate peaks in background for loaded tracks missing them
           setTimeout(() => {
             decodedTracks.forEach(async (track) => {
-              if (!track.peaks || track.peaks.length === 0) {
+              if (track.blob && (!track.peaks || track.peaks.length === 0)) {
                 console.log(`Generating peaks asynchronously for track: ${track.name}`);
                 const peaks = await generateWaveformPeaks(track.blob);
                 setTracks((prev) =>
@@ -848,7 +864,9 @@ export default function App() {
         cancelAnimationFrame(animationFrameRef.current);
       }
       // Clean up object URLs to avoid memory leaks
-      latestTracksRef.current.forEach((t) => URL.revokeObjectURL(t.audioUrl));
+      latestTracksRef.current.forEach((t) => {
+        if (t.audioUrl) URL.revokeObjectURL(t.audioUrl);
+      });
       if (latestMergedUrlRef.current) URL.revokeObjectURL(latestMergedUrlRef.current);
     };
   }, []);
@@ -929,6 +947,7 @@ export default function App() {
     setErrorMsg(null);
     setSuccessMsg(null);
     audioChunksRef.current = [];
+    recordingChunkIndexRef.current = 0;
 
     const RECORDING_MIME_CANDIDATES = [
       'audio/webm;codecs=opus',
@@ -971,7 +990,7 @@ export default function App() {
       micAnalyserRef.current = analyser;
 
       // Choose supported mimeType
-      let mimeType = '';
+      let mimeType = 'audio/webm';
       for (const candidate of RECORDING_MIME_CANDIDATES) {
         if (MediaRecorder.isTypeSupported(candidate)) {
           mimeType = candidate;
@@ -983,37 +1002,99 @@ export default function App() {
       recordingSessionIdRef.current = recordingSessionId;
       recordingStartTimeRef.current = Date.now();
 
+      const trackName = `הקלטה מהמיקרופון - טייק ${tracks.filter((t) => t.name.includes('הקלטה')).length + 1}`;
+
+      // Initialize recording session in IndexedDB
+      const sessionRecord = {
+        id: recordingSessionId,
+        projectId: 'default-project',
+        name: trackName,
+        mimeType,
+        startedAt: Date.now(),
+        lastChunkAt: Date.now(),
+        chunkCount: 0,
+        active: true
+      };
+      await createRecordingSession(sessionRecord);
+
       const options = mimeType ? { mimeType } : undefined;
       const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
 
-      const trackName = `הקלטה מהמיקרופון - טייק ${tracks.filter((t) => t.name.includes('הקלטה')).length + 1}`;
-
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
-          // Perform database save asynchronously without awaiting, avoiding Safari/WebKit thread blocking or timing issues
-          saveRecordingChunkToDB(recordingSessionId, trackName, event.data).catch((err) => {
+          const chunkIndex = recordingChunkIndexRef.current++;
+          const chunkId = `${recordingSessionId}-${chunkIndex}`;
+
+          const chunkRecord = {
+            id: chunkId,
+            sessionId: recordingSessionId,
+            index: chunkIndex,
+            blob: event.data,
+            sizeBytes: event.data.size,
+            createdAt: Date.now()
+          };
+
+          saveRecordingChunk(chunkRecord).then(() => {
+            return updateRecordingSession(recordingSessionId, {
+              chunkCount: chunkIndex + 1,
+              lastChunkAt: Date.now()
+            });
+          }).catch((err) => {
             console.error("Failed to auto-save recording chunk:", err);
           });
         }
       };
 
       mediaRecorder.onstop = async () => {
+        // Clear interval safely
+        if (recordingIntervalRef.current) {
+          clearInterval(recordingIntervalRef.current);
+          recordingIntervalRef.current = null;
+        }
+
         const actualMime = mediaRecorder.mimeType || 'audio/webm';
-        const finalBlob = new Blob(audioChunksRef.current, { type: actualMime });
-        
+        const sessionId = recordingSessionId; // capture local copy for callback safety
+
         try {
-          // Decode Blob to get duration and generate peaks
-          const decodedBuffer = await decodeFileToBuffer(finalBlob);
-          const duration = decodedBuffer.duration;
-          const peaks = await generateWaveformPeaks(finalBlob);
+          // Fetch chunks from DB to build continuous blob (or fall back to memory array if DB empty)
+          let chunks = await getChunksForSession(sessionId);
+          let finalBlob: Blob;
+          
+          if (chunks && chunks.length > 0) {
+            finalBlob = new Blob(chunks.map(c => c.blob), { type: actualMime });
+          } else {
+            finalBlob = new Blob(audioChunksRef.current, { type: actualMime });
+          }
+          
+          const estimatedDuration = (Date.now() - recordingStartTimeRef.current) / 1000;
+          let duration = estimatedDuration > 0 ? estimatedDuration : 30;
+          let peaks: number[] = [];
+          let audioBuffer: AudioBuffer | undefined = undefined;
+
+          // Only decode short recording in Web Audio to prevent freezing tabs on large records
+          if (estimatedDuration <= 300) {
+            try {
+              const decodedBuffer = await decodeFileToBuffer(finalBlob);
+              duration = decodedBuffer.duration;
+              audioBuffer = decodedBuffer;
+              peaks = await generateWaveformPeaks(finalBlob);
+            } catch (err) {
+              console.warn("Failed to decode recording, falling back to estimation:", err);
+              peaks = Array.from({ length: 100 }, () => 0.5);
+            }
+          } else {
+            // Placeholder peaks for long tracks
+            peaks = Array.from({ length: 100 }, () => 0.3 + Math.random() * 0.4);
+          }
 
           const newTrack: PodcastTrack = {
             id: `track-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             name: trackName,
             blob: finalBlob,
             audioUrl: URL.createObjectURL(finalBlob),
+            audioBuffer,
             duration: duration,
             trimStart: 0,
             trimEnd: duration,
@@ -1021,19 +1102,19 @@ export default function App() {
             mimeType: actualMime,
             sizeBytes: finalBlob.size,
             recordedAt: new Date().toISOString(),
-            peaks: peaks
+            peaks: peaks,
+            sourceSessionId: sessionId
           };
 
           setTracks((prev) => [...prev, newTrack]);
           setSuccessMsg('ההקלטה נשמרה בהצלחה והתווספה לרשימת הרצועות!');
 
-          if (recordingSessionIdRef.current) {
-            await finalizeRecordingSession(recordingSessionIdRef.current);
-            await deleteRecordingSession(recordingSessionIdRef.current);
-          }
+          // Finalize and cleanup the session chunks
+          await markSessionFinalized(sessionId, newTrack.id);
+          await deleteRecordingSessionAndChunks(sessionId);
         } catch (err: any) {
           console.error(err);
-          setErrorMsg('שגיאה בפענוח נתוני השמע שהוקלטו.');
+          setErrorMsg('שגיאה בפענוח או שמירת נתוני השמע שהוקלטו.');
         }
 
         // Clean up recording stream
@@ -1044,9 +1125,16 @@ export default function App() {
         recordingSessionIdRef.current = null;
       };
 
-      // Start recording continuously to prevent boundary gaps, clicks or audio jitter in Chrome/WebKit
+      // Start recording continuously
       mediaRecorder.start();
       setIsRecording(true);
+
+      // Periodically request data slices to prevent memory/gaps issues
+      recordingIntervalRef.current = setInterval(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.requestData();
+        }
+      }, 4000);
 
       // Trigger canvas drawing animation next tick
       setTimeout(() => {
@@ -1065,6 +1153,10 @@ export default function App() {
 
   // 4. Stop Recording
   const stopRecording = () => {
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
@@ -1182,7 +1274,7 @@ export default function App() {
   const handleDeleteTrack = (id: string) => {
     setTracks((prev) => {
       const toDelete = prev.find((t) => t.id === id);
-      if (toDelete) {
+      if (toDelete && toDelete.audioUrl) {
         URL.revokeObjectURL(toDelete.audioUrl);
       }
       return prev.filter((t) => t.id !== id);
@@ -1255,6 +1347,11 @@ export default function App() {
   const playIndividualTrackSegment = (track: PodcastTrack) => {
     getAudioContext(); // user activation
 
+    if (track.isMissingAudio || !track.audioUrl) {
+      setErrorMsg('לא ניתן להשמיע רצועה זו כיוון שקובץ השמע המקורי שלה חסר או פגום.');
+      return;
+    }
+
     // If already playing this track, stop it
     if (playingTrackId === track.id) {
       stopIndividualTrack();
@@ -1301,6 +1398,11 @@ export default function App() {
 
   const playIndividualFullTrack = (track: PodcastTrack) => {
     getAudioContext(); // user activation
+
+    if (track.isMissingAudio || !track.audioUrl) {
+      setErrorMsg('לא ניתן להשמיע רצועה זו כיוון שקובץ השמע המקורי שלה חסר או פגום.');
+      return;
+    }
 
     if (playingFullTrackId === track.id) {
       stopIndividualFullTrack();
@@ -1422,13 +1524,15 @@ export default function App() {
       const audioCtx = getAudioContext();
 
       // Filter valid tracks and calculate duration
-      const tracksToMerge = tracks.map((track) => {
-        const trimDuration = track.trimEnd - track.trimStart;
-        return {
-          ...track,
-          trimDuration: Math.max(0, trimDuration)
-        };
-      }).filter(t => t.trimDuration > 0);
+      const tracksToMerge = tracks
+        .filter((track) => !track.isMissingAudio && track.blob)
+        .map((track) => {
+          const trimDuration = track.trimEnd - track.trimStart;
+          return {
+            ...track,
+            trimDuration: Math.max(0, trimDuration)
+          };
+        }).filter(t => t.trimDuration > 0);
 
       if (tracksToMerge.length === 0) {
         throw new Error('אורך כל הרצועות שנבחרו למיזוג הוא 0 שניות.');
@@ -1444,7 +1548,7 @@ export default function App() {
       for (const track of tracksToMerge) {
         let buffer = track.audioBuffer;
         if (!buffer) {
-          buffer = await decodeFileToBuffer(track.blob);
+          buffer = await decodeFileToBuffer(track.blob!);
         }
         decodedBuffers.set(track.id, buffer);
       }
@@ -2179,7 +2283,9 @@ export default function App() {
       onConfirm: async () => {
         try {
           // Revoke track URLs
-          tracks.forEach((t) => URL.revokeObjectURL(t.audioUrl));
+          tracks.forEach((t) => {
+            if (t.audioUrl) URL.revokeObjectURL(t.audioUrl);
+          });
           setTracks([]);
           stopIndividualTrack();
           
@@ -2240,7 +2346,7 @@ export default function App() {
         trimEnd: t.trimEnd,
         volume: t.volume,
         isEffect: t.isEffect || false,
-        mimeType: t.blob.type,
+        mimeType: t.blob ? t.blob.type : (t.mimeType || 'audio/wav'),
         fadeInDuration: t.fadeInDuration || 0,
         fadeOutDuration: t.fadeOutDuration || 0,
         silenceAfter: t.silenceAfter || 0
@@ -2269,7 +2375,11 @@ export default function App() {
       const audioFolder = zip.folder("audio");
       if (audioFolder) {
         for (const track of tracks) {
-          audioFolder.file(`${track.id}`, track.blob);
+          if (track.blob) {
+            audioFolder.file(`${track.id}`, track.blob);
+          } else {
+            console.warn(`Skipping missing audio blob for track ${track.id} on export.`);
+          }
         }
       }
 

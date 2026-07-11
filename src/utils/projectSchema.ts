@@ -27,7 +27,7 @@ export const trackMetadataSchema = z.object({
   mimeType: z.string().optional().default('audio/wav').transform(val => val || 'audio/wav').refine(val => {
     if (!val) return true;
     const base = val.split(';')[0].trim().toLowerCase();
-    return base.startsWith('audio/') || ALLOWED_MIME_TYPES.includes(base) || base.includes('/') || base === '';
+    return base.startsWith('audio/') || ALLOWED_MIME_TYPES.includes(base) || base === '';
   }, "סוג קובץ השמע אינו נתמך במערכת (MIME type לא תקין)"),
   fadeInDuration: z.number().min(0).max(10).optional().default(0),
   fadeOutDuration: z.number().min(0).max(10).optional().default(0),
