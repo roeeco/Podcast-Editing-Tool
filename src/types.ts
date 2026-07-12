@@ -18,6 +18,7 @@ export interface PodcastTrack {
   silenceAfter?: number; // in seconds (0 to 10)
   sourceSessionId?: string;
   isMissingAudio?: boolean;
+  isSilence?: boolean;
 }
 
 export interface RecordingSession {

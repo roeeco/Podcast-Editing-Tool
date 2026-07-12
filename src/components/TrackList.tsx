@@ -12,6 +12,7 @@ import {
   Trash2,
   Sliders,
   Plus,
+  Clock,
   Download,
   Music,
   CheckCircle,
@@ -89,6 +90,20 @@ export const TrackList: React.FC<TrackListProps> = ({
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [expandedTracks, setExpandedTracks] = useState<Record<string, boolean>>({});
   const [isAdvancedOptionsExpanded, setIsAdvancedOptionsExpanded] = useState<boolean>(false);
+
+  const handleAddSilenceTrack = () => {
+    const newTrack: PodcastTrack = {
+      id: `silence-${Date.now()}`,
+      name: 'מרווח שקט',
+      duration: 15,
+      trimStart: 0,
+      trimEnd: 3,
+      volume: 0,
+      isSilence: true,
+      isEffect: true,
+    };
+    setTracks((prev) => [...prev, newTrack]);
+  };
 
   // Drag and drop reordering handler
   const handleDrop = (targetIndex: number) => {
@@ -209,8 +224,78 @@ export const TrackList: React.FC<TrackListProps> = ({
                       : (isDarkMode ? 'bg-[#ffcc00]' : 'bg-zinc-400')
                   }`} />
 
+                  {/* Mobile Compact Card View */}
+                  <div className="sm:hidden flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-2">
+                      {/* Play & Name */}
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => playIndividualFullTrack(track)}
+                          className={`p-2 rounded-lg shrink-0 flex items-center justify-center cursor-pointer min-h-[44px] min-w-[44px] ${
+                            playingFullTrackId === track.id
+                              ? 'bg-[#ffcc00] text-zinc-950 shadow animate-pulse'
+                              : (isDarkMode ? 'bg-[#2d2d37] text-zinc-300' : 'bg-zinc-200 text-zinc-700 shadow-sm')
+                          }`}
+                        >
+                          {playingFullTrackId === track.id ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                        </button>
+                        <input
+                          type="text"
+                          value={track.name}
+                          onChange={(e) => updateTrackField(track.id, 'name', e.target.value)}
+                          className={`rounded-lg px-2 py-1.5 text-sm font-bold focus:outline-none w-full truncate ${
+                            isDarkMode ? 'bg-zinc-800 text-white' : 'bg-zinc-150 text-zinc-900 shadow-sm'
+                          }`}
+                        />
+                      </div>
+
+                      {/* Expand & Delete & Details */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Volume summary / Duration indicators */}
+                        <div className="flex flex-col text-[10px] text-zinc-400 font-mono text-left leading-tight px-1">
+                          <span>⏱️ {formatTime(track.duration)}ש׳</span>
+                          <span>🔊 {Math.round(track.volume * 100)}%</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedTracks(prev => {
+                              const isCurrentlyExpanded = !!prev[track.id];
+                              // Only one track expanded at a time on mobile
+                              return {
+                                [track.id]: !isCurrentlyExpanded
+                              };
+                            });
+                          }}
+                          className={`p-2 rounded-lg transition-all border flex items-center justify-center cursor-pointer min-h-[44px] min-w-[44px] ${
+                            expandedTracks[track.id]
+                              ? 'bg-indigo-500/10 border-indigo-500 text-indigo-400'
+                              : (isDarkMode ? 'bg-[#2d2d37]/80 border-transparent text-zinc-400' : 'bg-zinc-200 border-transparent text-zinc-600')
+                          }`}
+                          title={expandedTracks[track.id] ? "צמצם אפשרויות" : "הרחב לעריכה"}
+                        >
+                          {expandedTracks[track.id] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTrack(track.id)}
+                          className={`p-2 rounded-lg transition-all min-h-[44px] min-w-[44px] flex items-center justify-center ${
+                            isDarkMode ? 'bg-red-950/40 text-red-400' : 'bg-red-100 text-red-700'
+                          }`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Header: editable name, full player, volume, delete */}
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pr-2">
+                  <div className={`flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pr-2 ${
+                    expandedTracks[track.id] ? 'flex' : 'hidden sm:flex'
+                  }`}>
                     <div className="flex items-center gap-2.5 w-full sm:w-auto flex-1">
                       {/* Drag handles */}
                       <div 
@@ -326,7 +411,9 @@ export const TrackList: React.FC<TrackListProps> = ({
                   </div>
 
                   {/* Waveform and Controls */}
-                  <div className={`p-4 rounded-xl flex flex-col gap-3.5 ${
+                  <div className={`p-4 rounded-xl flex-col gap-3.5 ${
+                    expandedTracks[track.id] ? 'flex' : 'hidden sm:flex'
+                  } ${
                     isDarkMode ? 'bg-[#1c1c22]/30' : 'bg-zinc-200/40'
                   }`}>
                     <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4">
@@ -435,28 +522,6 @@ export const TrackList: React.FC<TrackListProps> = ({
                                 </span>
                               </div>
                             </div>
-
-                            {/* Silence After Spacer */}
-                            <div className="flex flex-col gap-1.5">
-                              <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                                <span>מרווח שקט אחרי:</span>
-                              </label>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="10"
-                                  step="0.5"
-                                  value={track.silenceAfter || 0}
-                                  onChange={(e) => updateTrackField(track.id, 'silenceAfter', Number(e.target.value))}
-                                  className="w-full h-1 accent-blue-400 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
-                                />
-                                <span className={`font-mono text-xs font-bold min-w-[2.5rem] text-left ${isDarkMode ? 'text-zinc-400' : 'text-zinc-700'}`}>
-                                  {(track.silenceAfter || 0).toFixed(1)} ש'
-                                </span>
-                              </div>
-                            </div>
                           </div>
                         </motion.div>
                       )}
@@ -466,19 +531,32 @@ export const TrackList: React.FC<TrackListProps> = ({
               );
             })}
 
-            {/* Add Freesound overlay connector */}
-            <div className="flex justify-center mt-4 pt-2 border-t border-dashed border-zinc-700/20">
+             {/* Split row: Freesound and Add Silence buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-2 border-t border-dashed border-zinc-700/20">
               <button
                 id="add-music-migrating-btn"
                 onClick={() => setIsFreesoundModalOpen(true)}
-                className={`w-full py-4 px-6 rounded-xl border-2 border-dashed font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer ${
+                className={`py-3.5 px-4 rounded-xl border-2 border-dashed font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer ${
                   isDarkMode
                     ? 'border-indigo-500/40 bg-indigo-500/5 hover:bg-indigo-500/15 text-indigo-300 hover:border-indigo-400'
                     : 'border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:border-indigo-500'
                 }`}
               >
-                <Plus className="w-5 h-5 text-indigo-500" />
-                <span>➕ הוסף פתיח, מעבר או אפקט מוזיקלי (Freesound)</span>
+                <Plus className="w-4 h-4 text-indigo-500" />
+                <span>הוסף פתיח, מעבר או אפקט מוזיקלי (Freesound)</span>
+              </button>
+
+              <button
+                id="add-silence-btn"
+                onClick={handleAddSilenceTrack}
+                className={`py-3.5 px-4 rounded-xl border-2 border-dashed font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer ${
+                  isDarkMode
+                    ? 'border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 text-blue-300 hover:border-blue-400'
+                    : 'border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 hover:border-blue-500'
+                }`}
+              >
+                <Clock className="w-4 h-4 text-blue-500" />
+                <span>הוסף מרווח שקט (3 שניות)</span>
               </button>
             </div>
           </div>
@@ -550,8 +628,8 @@ export const TrackList: React.FC<TrackListProps> = ({
                       >
                         <FileAudio className="w-5 h-5 text-indigo-500" />
                         <div>
-                          <div className="text-xs font-bold font-sans">פורמט WAV (מומלץ)</div>
-                          <div className="text-[10px] mt-0.5 text-zinc-500">CD Quality | מהיר ומיידי</div>
+                          <div className="text-xs font-bold font-sans">קובץ גדול / מאסטר לא דחוס (WAV)</div>
+                          <div className="text-[10px] mt-0.5 text-zinc-500">איכות אולפן מקורית | קובץ גדול יותר</div>
                         </div>
                       </button>
 
@@ -566,8 +644,8 @@ export const TrackList: React.FC<TrackListProps> = ({
                       >
                         <Music className="w-5 h-5 text-indigo-500" />
                         <div>
-                          <div className="text-xs font-bold font-sans">פורמט WebM / Opus</div>
-                          <div className="text-[10px] mt-0.5 text-zinc-500">קובץ קל ודחוס | מעולה לשיתוף</div>
+                          <div className="text-xs font-bold font-sans">קובץ קל לשיתוף (WebM / Opus)</div>
+                          <div className="text-[10px] mt-0.5 text-zinc-500">דחוס וחסכוני ביותר | מהיר להעלאה ושיתוף</div>
                         </div>
                       </button>
                     </div>

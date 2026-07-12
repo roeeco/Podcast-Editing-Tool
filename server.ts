@@ -44,10 +44,10 @@ async function startServer() {
   // API Route for Freesound proxy with robust checks
   app.get("/api/freesound", rateLimiter, async (req, res) => {
     try {
-      const { type, q } = req.query;
+      const { type, q, category, page, sort } = req.query;
       
       // Limit q length to protect against buffer issues (80-120 chars)
-      let queryStr = q ? String(q).trim() : "music";
+      let queryStr = q ? String(q).trim() : "";
       if (queryStr.length > 100) {
         queryStr = queryStr.substring(0, 100);
       }
@@ -58,8 +58,46 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid asset category requested" });
       }
 
+      const categoryStr = category ? String(category).trim() : ""; // intro, outro, transition
+
+      // Build filter on server-side (do not allow arbitrary strings from client)
+      let filterStr = "";
+      if (categoryStr === "intro" || categoryStr === "outro") {
+        filterStr = "duration:[0 TO 10]";
+      } else if (categoryStr === "transition") {
+        filterStr = "duration:[0 TO 15]";
+      }
+
+      // Sort allowlist: score, rating_desc, downloads_desc, created_desc, duration_asc
+      const ALLOWED_SORTS = ["score", "rating_desc", "downloads_desc", "created_desc", "duration_asc"];
+      const sortStr = sort ? String(sort).trim() : "score";
+      const validatedSort = ALLOWED_SORTS.includes(sortStr) ? sortStr : "score";
+
+      // Build query parameters
+      const queryParams = new URLSearchParams();
+      queryParams.set("query", queryStr || "podcast");
+      if (FREESOUND_API_KEY) {
+        queryParams.set("token", FREESOUND_API_KEY);
+      }
+      // Request extra metadata
+      queryParams.set("fields", "id,name,tags,previews,duration,username,license,url,avg_rating,score");
+      queryParams.set("page_size", "50");
+      queryParams.set("group_by_pack", "1");
+      queryParams.set("sort", validatedSort);
+
+      if (filterStr) {
+        queryParams.set("filter", filterStr);
+      }
+
+      if (page) {
+        const pageNum = parseInt(String(page), 10);
+        if (!isNaN(pageNum) && pageNum > 0) {
+          queryParams.set("page", String(pageNum));
+        }
+      }
+
       // Serve from memory cache if fresh
-      const cacheKey = `${typeStr}:${queryStr}`;
+      const cacheKey = `${typeStr}:${queryStr}:${categoryStr}:${page || 1}:${validatedSort}`;
       const cached = searchCache.get(cacheKey);
       if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
         console.log(`Serving cached Freesound search: ${cacheKey}`);
@@ -70,9 +108,7 @@ async function startServer() {
         return res.status(503).json({ error: "Search service is temporarily unconfigured" });
       }
 
-      const queryEscaped = encodeURIComponent(queryStr);
-      // Freesound API endpoint
-      const freesoundUrl = `https://freesound.org/apiv2/search/text/?query=${queryEscaped}&token=${FREESOUND_API_KEY}&fields=id,name,tags,previews,duration,username`;
+      const freesoundUrl = `https://freesound.org/apiv2/search/text/?${queryParams.toString()}`;
       
       console.log(`Proxying search request to Freesound: ${freesoundUrl.replace(FREESOUND_API_KEY, "KEY_HIDDEN")}`);
       

@@ -38,10 +38,13 @@ import {
   Search,
   Loader2,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  Settings,
+  Menu
 } from 'lucide-react';
 import { PodcastTrack, ScriptSuggestion, ScriptCard } from './types';
 import { TrackTimeline } from './components/TrackTimeline';
+import { getRandomQuery } from './utils/freesoundQueries';
 import { WorkflowRail } from './components/WorkflowRail';
 import { ScriptEditor } from './components/ScriptEditor';
 import { Teleprompter } from './components/Teleprompter';
@@ -72,6 +75,7 @@ import {
 
 import { SCRIPT_TEMPLATES } from './data/templates';
 import { getWordCount, getReadTimeSeconds, formatReadTime, formatInstructionsJSX } from './utils/textHelpers';
+import { renderPodcastMix } from './utils/audioRender';
 import { ReadingCard } from './components/ReadingCard';
 import { MobileSliderPopover } from './components/MobileSliderPopover';
 
@@ -182,6 +186,8 @@ export default function App() {
   const [showMobileTransitions, setShowMobileTransitions] = useState<Record<string, boolean>>({});
   const [openMobileSlider, setOpenMobileSlider] = useState<{ trackId: string, type: 'fadeIn' | 'fadeOut' | 'silence' } | null>(null);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [recordingQualityMode, setRecordingQualityMode] = useState<'natural' | 'classroom'>('natural');
+  const [showSettingsPopover, setShowSettingsPopover] = useState<boolean>(false);
   const [recordingSeconds, setRecordingSeconds] = useState<number>(0);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -284,25 +290,24 @@ export default function App() {
   const [freesoundResults, setFreesoundResults] = useState<any[]>([]);
   const [freesoundLoading, setFreesoundLoading] = useState<boolean>(false);
   const [freesoundSearchQuery, setFreesoundSearchQuery] = useState<string>("");
+  const [freesoundSort, setFreesoundSort] = useState<string>("score");
   const [previewPlayingId, setPreviewPlayingId] = useState<string | null>(null);
   const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
 
-  const fetchFreesoundAssets = async (category: 'intro' | 'transition' | 'outro', customQuery?: string) => {
+  const fetchFreesoundAssets = async (category: 'intro' | 'transition' | 'outro', customQuery?: string, sortVal?: string) => {
     setFreesoundLoading(true);
     setErrorMsg(null);
     try {
       let query = customQuery;
       if (!query) {
-        if (category === 'intro') {
-          query = 'podcast intro music';
-        } else if (category === 'transition') {
-          query = 'podcast transition effect';
-        } else {
-          query = 'podcast closing music';
-        }
+        query = getRandomQuery(category);
+        setFreesoundSearchQuery(query);
       }
 
-      const response = await fetch(`/api/freesound?type=${category === 'transition' ? 'soundeffects' : 'music'}&q=${encodeURIComponent(query)}`);
+      const activeSort = sortVal || freesoundSort || "score";
+      const type = category === 'transition' ? 'soundeffects' : 'music';
+
+      const response = await fetch(`/api/freesound?type=${type}&q=${encodeURIComponent(query)}&category=${category}&sort=${activeSort}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch from proxy, status: ${response.status}`);
       }
@@ -318,7 +323,11 @@ export default function App() {
 
   useEffect(() => {
     if (isFreesoundModalOpen) {
-      fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery);
+      const initialQuery = freesoundSearchQuery || getRandomQuery(freesoundCategory);
+      if (!freesoundSearchQuery) {
+        setFreesoundSearchQuery(initialQuery);
+      }
+      fetchFreesoundAssets(freesoundCategory, initialQuery, freesoundSort);
     }
   }, [isFreesoundModalOpen, freesoundCategory]);
 
@@ -331,8 +340,18 @@ export default function App() {
       }
       setPreviewPlayingId(null);
       setFreesoundSearchQuery("");
+      setFreesoundSort("score");
     }
   }, [isFreesoundModalOpen]);
+
+  const handleFreesoundMoreVariety = () => {
+    const nextQuery = getRandomQuery(freesoundCategory);
+    setFreesoundSearchQuery(nextQuery);
+    const SORTS = ["score", "rating_desc", "downloads_desc", "created_desc"];
+    const randomSort = SORTS[Math.floor(Math.random() * SORTS.length)];
+    setFreesoundSort(randomSort);
+    fetchFreesoundAssets(freesoundCategory, nextQuery, randomSort);
+  };
 
   const togglePreviewAudio = (hitId: string, audioUrl: string) => {
     if (previewPlayingId === hitId && previewAudio) {
@@ -350,6 +369,21 @@ export default function App() {
       setPreviewAudio(audio);
       setPreviewPlayingId(hitId);
     }
+  };
+
+  const handleAddSilenceTrack = () => {
+    const newTrack: PodcastTrack = {
+      id: `silence-${Date.now()}`,
+      name: 'מרווח שקט',
+      duration: 15, // Let's make total potential length 15s so they can drag/trim it
+      trimStart: 0,
+      trimEnd: 3, // Defaults to 3s
+      volume: 0,
+      isSilence: true,
+      isEffect: true,
+    };
+    setTracks((prev) => [...prev, newTrack]);
+    setSuccessMsg('הוסף מרווח שקט של 3 שניות!');
   };
 
   const handleAddFreesoundTrack = async (hit: any) => {
@@ -390,6 +424,11 @@ export default function App() {
       const duration = decodedBuffer.duration;
       const peaks = await generateWaveformPeaks(audioBlob);
 
+      let trimEndVal = duration;
+      if (freesoundCategory === 'intro' || freesoundCategory === 'outro') {
+        trimEndVal = Math.min(duration, 10);
+      }
+
       const newTrack: PodcastTrack = {
         id: `track-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         name: trackName,
@@ -397,7 +436,7 @@ export default function App() {
         audioUrl: URL.createObjectURL(audioBlob),
         duration: duration,
         trimStart: 0,
-        trimEnd: duration,
+        trimEnd: trimEndVal,
         volume: 0.8,
         isEffect: true,
         mimeType: audioBlob.type,
@@ -453,6 +492,7 @@ export default function App() {
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
   const [expandedTracks, setExpandedTracks] = useState<{ [key: string]: boolean }>({});
   const [isAdvancedOptionsExpanded, setIsAdvancedOptionsExpanded] = useState<boolean>(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   const latestTracksRef = useRef<PodcastTrack[]>([]);
   const latestMergedUrlRef = useRef<string | null>(null);
@@ -469,20 +509,8 @@ export default function App() {
     setHasUnmergedChanges(true);
   }, [tracks]);
 
-  const [isScrolled, setIsScrolled] = useState<boolean>(false);
+  const isScrolled = true;
   const showHeader = true;
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 15);
-    };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-    };
-  }, []);
 
   // Synchronize AI Assistant Output Presentation Format with the editing style (scriptMode) above the panel
   useEffect(() => {
@@ -958,27 +986,30 @@ export default function App() {
     ];
 
     try {
-      // 1. Request high-quality studio voice constraints with user-requested active processing
+      // 1. Request high-quality studio voice constraints with user-selected quality mode
       let stream: MediaStream;
+      const isNatural = recordingQualityMode === 'natural';
+      const audioConstraints = {
+        echoCancellation: !isNatural,
+        noiseSuppression: !isNatural,
+        autoGainControl: !isNatural,
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 }
+      };
+
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            channelCount: { ideal: 1 },
-            sampleRate: { ideal: 44100 }
-          }
+          audio: audioConstraints
         });
       } catch (err) {
         console.warn("High-quality audio constraints failed, falling back to basic stream:", err);
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        });
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true
+          });
+        } catch (fallbackErr) {
+          throw new Error("לא ניתן לגשת למיקרופון. אנא ודא/י שהענקת הרשאות מתאימות.");
+        }
       }
       recordingStreamRef.current = stream;
 
@@ -1347,6 +1378,23 @@ export default function App() {
   const playIndividualTrackSegment = (track: PodcastTrack) => {
     getAudioContext(); // user activation
 
+    if (track.isSilence) {
+      if (playingTrackId === track.id) {
+        stopIndividualTrack();
+        return;
+      }
+      stopIndividualTrack();
+      setPlayingTrackId(track.id);
+      
+      const durationSec = track.trimEnd - track.trimStart;
+      const timeoutId = setTimeout(() => {
+        stopIndividualTrack();
+      }, durationSec * 1000);
+      
+      (window as any)[`silenceTimeout_${track.id}`] = timeoutId;
+      return;
+    }
+
     if (track.isMissingAudio || !track.audioUrl) {
       setErrorMsg('לא ניתן להשמיע רצועה זו כיוון שקובץ השמע המקורי שלה חסר או פגום.');
       return;
@@ -1438,9 +1486,16 @@ export default function App() {
   };
 
   const stopIndividualTrack = () => {
-    if (playingTrackId && audioElementsRef.current[playingTrackId]) {
-      audioElementsRef.current[playingTrackId].pause();
-      delete audioElementsRef.current[playingTrackId];
+    if (playingTrackId) {
+      if (audioElementsRef.current[playingTrackId]) {
+        audioElementsRef.current[playingTrackId].pause();
+        delete audioElementsRef.current[playingTrackId];
+      }
+      const silId = `silenceTimeout_${playingTrackId}`;
+      if ((window as any)[silId]) {
+        clearTimeout((window as any)[silId]);
+        delete (window as any)[silId];
+      }
     }
     setPlayingTrackId(null);
     stopIndividualFullTrack();
@@ -1463,7 +1518,7 @@ export default function App() {
           
         const mediaRecorder = new MediaRecorder(destination.stream, { 
           mimeType, 
-          audioBitsPerSecond: 128000 
+          audioBitsPerSecond: 192000 
         });
         const chunks: Blob[] = [];
         
@@ -1521,196 +1576,20 @@ export default function App() {
     }
 
     try {
-      const audioCtx = getAudioContext();
+      // Call our OfflineAudioContext render pipeline!
+      const { buffer: mergedBuffer, duration: totalSeconds } = await renderPodcastMix(tracks, {
+        useCrossfade,
+        useDucking,
+        useClipProtection: useNormalization,
+        outputSampleRate: 48000
+      });
 
-      // Filter valid tracks and calculate duration
-      const tracksToMerge = tracks
-        .filter((track) => !track.isMissingAudio && track.blob)
-        .map((track) => {
-          const trimDuration = track.trimEnd - track.trimStart;
-          return {
-            ...track,
-            trimDuration: Math.max(0, trimDuration)
-          };
-        }).filter(t => t.trimDuration > 0);
+      let finalBlob: Blob;
+      let downloadableUrl = '';
 
-      if (tracksToMerge.length === 0) {
-        throw new Error('אורך כל הרצועות שנבחרו למיזוג הוא 0 שניות.');
-      }
-
-      // Use standard sample rate (e.g. 44100 Hz)
-      const sampleRate = 44100;
-      const channels = 2; // Stereo output
-      const crossfadeDuration = 1.5; // 1.5s crossfade overlap
-
-      // Decode any tracks that haven't been decoded yet (lazy decoding on demand)
-      const decodedBuffers = new Map<string, AudioBuffer>();
-      for (const track of tracksToMerge) {
-        let buffer = track.audioBuffer;
-        if (!buffer) {
-          buffer = await decodeFileToBuffer(track.blob!);
-        }
-        decodedBuffers.set(track.id, buffer);
-      }
-
-      // Calculate global layout positions (start/end sample) for all tracks
-      const layout: {
-        track: typeof tracksToMerge[0];
-        startSample: number;
-        endSample: number;
-      }[] = [];
-
-      let currentSample = 0;
-      for (let i = 0; i < tracksToMerge.length; i++) {
-        const track = tracksToMerge[i];
-        const trackSamples = Math.ceil(track.trimDuration * sampleRate);
-        
-        let startSample = currentSample;
-        
-        // If crossfade is enabled, overlap this track with the previous one
-        if (i > 0 && useCrossfade) {
-          const prevLayout = layout[i - 1];
-          const prevDuration = prevLayout.track.trimDuration;
-          if (prevDuration > 3 && track.trimDuration > 3) {
-            const crossSamples = Math.floor(crossfadeDuration * sampleRate);
-            startSample = Math.max(0, prevLayout.endSample - crossSamples);
-          }
-        }
-
-        const endSample = startSample + trackSamples;
-        layout.push({
-          track,
-          startSample,
-          endSample
-        });
-
-        // The next track starts after this one finishes, plus any silence spacer duration
-        const silenceSamples = Math.ceil((track.silenceAfter || 0) * sampleRate);
-        currentSample = endSample + silenceSamples;
-      }
-
-      // Total output buffer samples
-      const totalBufferSamples = Math.max(
-        currentSample,
-        ...layout.map(l => l.endSample)
-      );
-
-      const totalSeconds = totalBufferSamples / sampleRate;
-
-      // Create empty target buffer
-      const mergedBuffer = audioCtx.createBuffer(
-        channels,
-        totalBufferSamples,
-        sampleRate
-      );
-
-      // Build speech/voice tracks active interval mapping for automatic background music ducking
-      // Speech tracks are those not marked as isEffect (sound effects/music)
-      const speechIntervals = layout
-        .filter(item => !item.track.isEffect)
-        .map(item => [item.startSample, item.endSample]);
-
-      // Iterate over left and right channels to mix sample data
-      for (let channelIndex = 0; channelIndex < channels; channelIndex++) {
-        const targetData = mergedBuffer.getChannelData(channelIndex);
-        targetData.fill(0); // initialize channel with zeros
-
-        for (const item of layout) {
-          const { track, startSample, endSample } = item;
-          const buffer = decodedBuffers.get(track.id)!;
-          const trackChannels = buffer.numberOfChannels;
-          
-          // Fallback if track has fewer channels than target (e.g. Mono -> Stereo)
-          const sourceChannelIndex = channelIndex < trackChannels ? channelIndex : 0;
-          const sourceData = buffer.getChannelData(sourceChannelIndex);
-
-          // Calculate start and end samples in source buffer for the trim range
-          const startSourceSample = Math.floor(track.trimStart * buffer.sampleRate);
-          const rateRatio = buffer.sampleRate / sampleRate;
-          const trackSamplesCount = endSample - startSample;
-
-          const fadeInSamples = (track.fadeInDuration || 0) * sampleRate;
-          const fadeOutSamples = (track.fadeOutDuration || 0) * sampleRate;
-
-          for (let i = 0; i < trackSamplesCount; i++) {
-            const targetSamplePos = startSample + i;
-            if (targetSamplePos >= targetData.length) break;
-
-            const sourceSamplePos = startSourceSample + Math.floor(i * rateRatio);
-            if (sourceSamplePos < sourceData.length) {
-              let sampleVal = sourceData[sourceSamplePos] * track.volume;
-
-              // Apply Fade In
-              if (fadeInSamples > 0 && i < fadeInSamples) {
-                const ratio = i / fadeInSamples;
-                sampleVal *= ratio;
-              }
-              // Apply Fade Out
-              else if (fadeOutSamples > 0 && i > trackSamplesCount - fadeOutSamples) {
-                const ratio = (trackSamplesCount - i) / fadeOutSamples;
-                sampleVal *= Math.max(0, ratio);
-              }
-
-              // Apply default crossfade transition ramp if track fades aren't configured
-              if (useCrossfade && i < (crossfadeDuration * sampleRate) && item.track !== tracksToMerge[0]) {
-                const crossSamples = crossfadeDuration * sampleRate;
-                if (!track.fadeInDuration) {
-                  sampleVal *= (i / crossSamples);
-                }
-              }
-
-              // Apply Automatic Background Music Ducking under dialogue/speech
-              if (useDucking && track.isEffect) {
-                const isOverlappingSpeech = speechIntervals.some(([speechStart, speechEnd]) => {
-                  const padding = 0.5 * sampleRate; // 0.5 seconds padding around speech
-                  return targetSamplePos >= (speechStart - padding) && targetSamplePos <= (speechEnd + padding);
-                });
-
-                if (isOverlappingSpeech) {
-                  sampleVal *= 0.25; // Duck volume to 25%
-                }
-              }
-
-              // Mix by addition (additive mixing)
-              targetData[targetSamplePos] += sampleVal;
-            }
-          }
-        }
-      }
-
-      // Apply Peak Normalization to maximize audio volume and level speech without clipping
-      if (useNormalization) {
-        let maxVal = 0;
-        for (let c = 0; c < channels; c++) {
-          const data = mergedBuffer.getChannelData(c);
-          for (let i = 0; i < data.length; i++) {
-            const absVal = Math.abs(data[i]);
-            if (absVal > maxVal) {
-              maxVal = absVal;
-            }
-          }
-        }
-
-        if (maxVal > 0) {
-          const targetPeak = 0.98; // Peak level at -0.2 dB
-          const normFactor = targetPeak / maxVal;
-          for (let c = 0; c < channels; c++) {
-            const data = mergedBuffer.getChannelData(c);
-            for (let i = 0; i < data.length; i++) {
-              data[i] *= normFactor;
-            }
-          }
-        }
-      }
-
-      // Encode the finished AudioBuffer into a WAV blob client-side
-      let finalBlob = bufferToWav(mergedBuffer);
-      
       if (mergedUrl) {
         URL.revokeObjectURL(mergedUrl);
       }
-
-      let downloadableUrl = URL.createObjectURL(finalBlob);
 
       // Perform optional progressive native WebM capture if requested
       if (exportFormat === 'webm') {
@@ -1729,6 +1608,10 @@ export default function App() {
         } finally {
           setIsCompressing(false);
         }
+      } else {
+        // WAV export
+        finalBlob = bufferToWav(mergedBuffer);
+        downloadableUrl = URL.createObjectURL(finalBlob);
       }
 
       setMergedBlob(finalBlob);
@@ -2744,7 +2627,7 @@ export default function App() {
 
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Upload Audio Tracks Block */}
-            <label className={`flex items-center gap-1.5 rounded-xl border transition-all font-black cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242] text-zinc-300 hover:text-white ${
+            <label className={`hidden sm:flex items-center gap-1.5 rounded-xl border transition-all font-black cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242] text-zinc-300 hover:text-white ${
               isUploading ? 'opacity-60 cursor-not-allowed' : ''
             } ${
               isScrolled ? 'px-2.5 py-1.5 text-[10px]' : 'px-3 py-2 text-xs'
@@ -2775,7 +2658,7 @@ export default function App() {
               isScrolled ? 'p-1' : 'p-1.5'
             }`}>
               {isRecording ? (
-                <div className="flex items-center gap-2 sm:gap-2.5">
+                <div className="flex items-center gap-1.5 sm:gap-2.5">
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
                     <span className="text-[11px] font-bold text-red-400 bg-red-950/40 px-1.5 py-0.5 rounded animate-pulse font-mono">
@@ -2784,76 +2667,180 @@ export default function App() {
                   </div>
                   <canvas
                     ref={micCanvasRef}
-                    className="w-16 sm:w-28 h-6 bg-[#1c1c22]/90 rounded overflow-hidden border border-zinc-700/20"
+                    className="hidden sm:block w-16 sm:w-28 h-6 bg-[#1c1c22]/90 rounded overflow-hidden border border-zinc-700/20"
                     width={120}
                     height={24}
                   />
                   <button
                     onClick={stopRecording}
-                    className="px-2 py-0.5 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white font-bold rounded transition-all flex items-center justify-center gap-1 cursor-pointer text-xs"
+                    className="px-2 py-1 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer text-xs min-h-[38px] sm:min-h-0"
                   >
                     <Square className="w-2.5 h-2.5 fill-white text-white" />
-                    <span className="hidden sm:inline font-bold">עצור</span>
+                    <span className="font-bold">עצור</span>
                   </button>
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5 sm:gap-2.5">
                   <button
                     onClick={startRecording}
-                    className={`bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-md shadow-red-600/10 font-bold ${
-                      isScrolled ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1 text-xs'
+                    className={`bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-md shadow-red-600/10 font-bold min-h-[38px] sm:min-h-0 ${
+                      isScrolled ? 'px-2 py-1.5 text-[10px]' : 'px-2.5 py-1.5 text-xs'
                     }`}
                   >
                     <Mic className="w-3 h-3 text-white animate-pulse" />
                     <span>הקלטה חדשה</span>
                   </button>
+
                   <div className="hidden lg:flex flex-col text-right justify-center border-r border-zinc-800/60 pr-2.5 mr-0.5 leading-none">
-                    <span className="text-[9px] font-bold opacity-80 text-zinc-300">הקלטה מהדפדפן</span>
-                    <span className="text-[7px] text-zinc-400 leading-none">שמירה אוטומטית</span>
+                    <span className="text-[9px] font-bold opacity-80 text-zinc-300">שמירה אוטומטית</span>
+                    <span className="text-[7px] text-zinc-400 leading-none">בזמן הקלטה</span>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Free space indicator & auto save state */}
-            <div className="hidden md:flex flex-col text-right justify-center border-r border-zinc-800/60 pr-2.5 mr-0.5 leading-none">
-              <span className="text-[9px] text-zinc-400">שטח פנוי:</span>
-              <span className="text-[10px] font-bold text-zinc-300">
-                {storageEstimate ? `${(storageEstimate.quotaMb - storageEstimate.usedMb).toLocaleString()} MB` : '...'}
-              </span>
+            {/* Cog settings button with popover */}
+            <div className="hidden sm:block relative">
+              <button
+                type="button"
+                onClick={() => setShowSettingsPopover(!showSettingsPopover)}
+                className={`p-1.5 sm:p-2 rounded-xl transition-all border flex items-center justify-center cursor-pointer ${
+                  showSettingsPopover 
+                    ? 'bg-amber-400/10 border-amber-500 text-amber-400' 
+                    : 'bg-[#2a2a37]/80 border-zinc-700/40 text-zinc-400 hover:text-white hover:bg-[#323242]'
+                }`}
+                title="הגדרות אולפן ואחסון"
+              >
+                <Settings className={`w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200 ${showSettingsPopover ? 'rotate-45' : ''}`} />
+              </button>
+
+              <AnimatePresence>
+                {showSettingsPopover && (
+                  <>
+                    {/* Clickaway handler */}
+                    <div 
+                      className="fixed inset-0 z-40 cursor-default" 
+                      onClick={() => setShowSettingsPopover(false)} 
+                    />
+                    
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute left-0 mt-2 w-72 bg-[#1f1f2a] border border-zinc-700/50 rounded-xl shadow-2xl p-4 z-50 text-right text-zinc-200"
+                    >
+                      <h4 className="font-black text-xs text-amber-400 mb-3 border-b border-zinc-800 pb-1.5 flex items-center justify-between gap-1.5">
+                        <span>הגדרות אולפן ואחסון</span>
+                        <Settings className="w-3.5 h-3.5 text-amber-500" />
+                      </h4>
+
+                      {/* Studio / Class Mode Switch */}
+                      <div className="mb-4">
+                        <label className="block text-[11px] font-black text-zinc-300 mb-1.5">מצב איכות הקלטה:</label>
+                        <div className="grid grid-cols-2 bg-zinc-950/60 rounded-lg p-1 border border-zinc-800 gap-1 mb-2.5">
+                          <button
+                            type="button"
+                            onClick={() => setRecordingQualityMode('natural')}
+                            className={`py-1.5 text-xs font-black rounded transition-all cursor-pointer ${
+                              recordingQualityMode === 'natural'
+                                ? 'bg-[#ffcc00] text-zinc-950 shadow-md'
+                                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
+                            }`}
+                          >
+                            מצב סטודיו
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRecordingQualityMode('classroom')}
+                            className={`py-1.5 text-xs font-black rounded transition-all cursor-pointer ${
+                              recordingQualityMode === 'classroom'
+                                ? 'bg-[#ffcc00] text-zinc-950 shadow-md'
+                                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
+                            }`}
+                          >
+                            מצב כיתה
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-2 text-[10px] bg-zinc-950/30 p-2 rounded-lg border border-zinc-800/40 leading-relaxed text-zinc-400">
+                          <div>
+                            <span className="font-bold text-zinc-200">🎙️ מצב סטודיו:</span>
+                            <p className="mt-0.5 text-[9px]">איכות שמע מלאה, טבעית ומקסימלית ללא סינון רעשים. מומלץ להקלטה בסביבה שקטה או עם מיקרופון מקצועי.</p>
+                          </div>
+                          <div>
+                            <span className="font-bold text-zinc-200">🏫 מצב כיתה:</span>
+                            <p className="mt-0.5 text-[9px]">סינון רעשים אקטיבי וחכם המותאם במיוחד לכיתה רועשת, לדיבור קרוב ולצמצום רעשי רקע של תלמידים אחרים.</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Available Space Section */}
+                      <div className="pt-2 border-t border-zinc-800/60">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-[11px] text-zinc-400 font-bold">שטח פנוי בדפדפן:</span>
+                          <span className="font-bold text-[#ffcc00] font-mono">
+                            {storageEstimate 
+                              ? `${(storageEstimate.quotaMb - storageEstimate.usedMb).toLocaleString()} MB` 
+                              : 'בחישוב...'}
+                          </span>
+                        </div>
+                        {storageEstimate && (
+                          <div className="w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden border border-zinc-800/40">
+                            <div 
+                              className="bg-amber-500 h-full rounded-full transition-all duration-300" 
+                              style={{ width: `${Math.max(2, 100 - storageEstimate.pct)}%` }}
+                            />
+                          </div>
+                        )}
+                        <p className="text-[9px] text-zinc-500 mt-1.5 leading-tight">
+                          ההקלטות נשמרות באופן מאובטח בתוך הזיכרון המקומי של הדפדפן (IndexedDB) ואינן נשלחות לשרת חיצוני לצורך שמירה.
+                        </p>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
             </div>
+
+            {/* Mobile Menu Button - "one 'More' menu button" */}
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="flex sm:hidden p-2 rounded-xl transition-all border items-center justify-center cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 text-zinc-300 hover:text-white hover:bg-[#323242]"
+              style={{ minHeight: '44px', minWidth: '44px' }}
+              title="תפריט אפשרויות"
+            >
+              <Menu className="w-5 h-5 text-zinc-200" />
+            </button>
           </div>
         </div>
 
         {/* Bottom Row: Segmented Workspace Tabs - Directly attached to the header to prevent any gap */}
-        <div className={`flex gap-1.5 w-full bg-[#1b1b22]/90 border border-zinc-800/50 rounded-xl transition-all duration-300 ${
-          isScrolled ? 'p-1' : 'p-1.5'
-        }`}>
+        <div className="flex gap-1.5 w-full bg-[#1b1b22]/90 border border-zinc-800/50 rounded-xl transition-all duration-300 p-1">
           <button
             onClick={() => setMainTab('text')}
-            className={`flex-1 font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer rounded-lg ${
-              isScrolled ? 'py-1.5 px-3 text-xs' : 'py-2.5 px-4 text-xs sm:text-sm'
-            } ${
+            className={`flex-1 font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer rounded-lg px-3 text-xs min-h-[44px] ${
               mainTab === 'text'
                 ? 'bg-[#ffcc00]/10 text-[#ffcc00]'
                 : 'text-zinc-400 hover:text-[#ffcc00] hover:bg-[#ffcc00]/5'
             }`}
           >
-            <FileText className={`transition-colors ${isScrolled ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} ${mainTab === 'text' ? 'text-[#ffcc00]' : 'text-zinc-400'}`} />
-            <span className="tracking-wide font-black">עבודה עם הטקסט (תסריט וכרטיסיות)</span>
+            <FileText className={`transition-colors w-3.5 h-3.5 ${mainTab === 'text' ? 'text-[#ffcc00]' : 'text-zinc-400'}`} />
+            <span className="tracking-wide font-black hidden sm:inline">עבודה עם הטקסט</span>
+            <span className="tracking-wide font-black sm:hidden">טקסט</span>
           </button>
           <button
             onClick={() => setMainTab('tracks')}
-            className={`flex-1 font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer rounded-lg ${
-              isScrolled ? 'py-1.5 px-3 text-xs' : 'py-2.5 px-4 text-xs sm:text-sm'
-            } ${
+            className={`flex-1 font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer rounded-lg px-3 text-xs min-h-[44px] ${
               mainTab === 'tracks'
                 ? 'bg-emerald-400/10 text-emerald-400'
                 : 'text-zinc-400 hover:text-emerald-400 hover:bg-emerald-400/5'
             }`}
           >
-            <FileAudio className={`transition-colors ${isScrolled ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} ${mainTab === 'tracks' ? 'text-emerald-400' : 'text-zinc-400'}`} />
-            <span className="tracking-wide font-black">רשימת הרצועות והעריכה ({tracks.length})</span>
+            <FileAudio className={`transition-colors w-3.5 h-3.5 ${mainTab === 'tracks' ? 'text-emerald-400' : 'text-zinc-400'}`} />
+            <span className="tracking-wide font-black hidden sm:inline">עריכת קול</span>
+            <span className="tracking-wide font-black sm:hidden">שמע</span>
           </button>
         </div>
       </header>
@@ -4038,7 +4025,7 @@ export default function App() {
 
                       {/* Mobile Header (Hidden on Desktop) */}
                       <div className="flex md:hidden items-center justify-between gap-2.5 w-full pr-1.5">
-                        {/* Left Controls: Trash and Transition Settings Toggle */}
+                        {/* Left Controls: Trash */}
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
@@ -4052,130 +4039,18 @@ export default function App() {
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowMobileTransitions(prev => ({
-                                ...prev,
-                                [track.id]: !prev[track.id]
-                              }));
-                            }}
-                            title="אפשרויות מעברים"
-                            className={`p-1.5 rounded-lg transition-all cursor-pointer border ${
-                              showMobileTransitions[track.id]
-                                ? 'bg-indigo-500/10 border-indigo-500 text-indigo-400'
-                                : (isDarkMode ? 'bg-[#2d2d37] border-transparent text-zinc-400 hover:text-white' : 'bg-zinc-200 border-transparent text-zinc-600 hover:text-zinc-900 shadow-sm')
-                            }`}
-                          >
-                            <Sliders className="w-3.5 h-3.5" />
-                          </button>
                         </div>
 
-                        {/* Middle: Title or Transition options overlay */}
+                        {/* Middle: Title */}
                         <div className="flex-1 min-w-0 mx-1">
-                          {showMobileTransitions[track.id] ? (
-                            <div className="flex items-center justify-around gap-1 py-0.5 bg-[#121216]/50 rounded-lg px-1">
-                              {/* Fade In Button */}
-                              <div className="relative">
-                                <button
-                                  type="button"
-                                  onClick={() => setOpenMobileSlider(openMobileSlider?.trackId === track.id && openMobileSlider?.type === 'fadeIn' ? null : { trackId: track.id, type: 'fadeIn' })}
-                                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                                    (track.fadeInDuration || 0) > 0
-                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                                      : 'text-zinc-400 bg-zinc-500/5'
-                                  }`}
-                                >
-                                  <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                                  <span>In: {track.fadeInDuration ? `${track.fadeInDuration}s` : 'כבוי'}</span>
-                                </button>
-                                <AnimatePresence>
-                                  {openMobileSlider?.trackId === track.id && openMobileSlider?.type === 'fadeIn' && (
-                                    <MobileSliderPopover
-                                      value={track.fadeInDuration || 0}
-                                      min={0}
-                                      max={5}
-                                      step={0.5}
-                                      onChange={(v) => updateTrackField(track.id, 'fadeInDuration', v)}
-                                      onClose={() => setOpenMobileSlider(null)}
-                                      label="Fade In (כניסה)"
-                                      colorClass="accent-emerald-500"
-                                    />
-                                  )}
-                                </AnimatePresence>
-                              </div>
-
-                              {/* Fade Out Button */}
-                              <div className="relative">
-                                <button
-                                  type="button"
-                                  onClick={() => setOpenMobileSlider(openMobileSlider?.trackId === track.id && openMobileSlider?.type === 'fadeOut' ? null : { trackId: track.id, type: 'fadeOut' })}
-                                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                                    (track.fadeOutDuration || 0) > 0
-                                      ? 'bg-red-400/10 text-red-400 border border-red-400/30'
-                                      : 'text-zinc-400 bg-zinc-500/5'
-                                  }`}
-                                >
-                                  <span className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />
-                                  <span>Out: {track.fadeOutDuration ? `${track.fadeOutDuration}s` : 'כבוי'}</span>
-                                </button>
-                                <AnimatePresence>
-                                  {openMobileSlider?.trackId === track.id && openMobileSlider?.type === 'fadeOut' && (
-                                    <MobileSliderPopover
-                                      value={track.fadeOutDuration || 0}
-                                      min={0}
-                                      max={5}
-                                      step={0.5}
-                                      onChange={(v) => updateTrackField(track.id, 'fadeOutDuration', v)}
-                                      onClose={() => setOpenMobileSlider(null)}
-                                      label="Fade Out (יציאה)"
-                                      colorClass="accent-red-400"
-                                    />
-                                  )}
-                                </AnimatePresence>
-                              </div>
-
-                              {/* Silence After Button */}
-                              <div className="relative">
-                                <button
-                                  type="button"
-                                  onClick={() => setOpenMobileSlider(openMobileSlider?.trackId === track.id && openMobileSlider?.type === 'silence' ? null : { trackId: track.id, type: 'silence' })}
-                                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                                    (track.silenceAfter || 0) > 0
-                                      ? 'bg-blue-400/10 text-blue-400 border border-blue-400/30'
-                                      : 'text-zinc-400 bg-zinc-500/5'
-                                  }`}
-                                >
-                                  <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
-                                  <span>רווח: {track.silenceAfter ? `${track.silenceAfter}s` : 'כבוי'}</span>
-                                </button>
-                                <AnimatePresence>
-                                  {openMobileSlider?.trackId === track.id && openMobileSlider?.type === 'silence' && (
-                                    <MobileSliderPopover
-                                      value={track.silenceAfter || 0}
-                                      min={0}
-                                      max={10}
-                                      step={0.5}
-                                      onChange={(v) => updateTrackField(track.id, 'silenceAfter', v)}
-                                      onClose={() => setOpenMobileSlider(null)}
-                                      label="Gap (מרווח שקט)"
-                                      colorClass="accent-blue-400"
-                                    />
-                                  )}
-                                </AnimatePresence>
-                              </div>
-                            </div>
-                          ) : (
-                            <input
-                              type="text"
-                              value={track.name}
-                              onChange={(e) => updateTrackField(track.id, 'name', e.target.value)}
-                              className={`rounded-lg px-2 py-1 text-xs font-bold focus:outline-none w-full ${
-                                isDarkMode ? 'bg-[#2d2d37] text-white focus:ring-1 focus:ring-zinc-700' : 'bg-zinc-200 text-zinc-900 focus:ring-1 focus:ring-zinc-300 shadow-sm'
-                              }`}
-                            />
-                          )}
+                          <input
+                            type="text"
+                            value={track.name}
+                            onChange={(e) => updateTrackField(track.id, 'name', e.target.value)}
+                            className={`rounded-lg px-2 py-1 text-xs font-bold focus:outline-none w-full ${
+                              isDarkMode ? 'bg-[#2d2d37] text-white focus:ring-1 focus:ring-zinc-700' : 'bg-zinc-200 text-zinc-900 focus:ring-1 focus:ring-zinc-300 shadow-sm'
+                            }`}
+                          />
                         </div>
 
                         {/* Right: Play, Volume, and Reordering Arrows */}
@@ -4318,8 +4193,26 @@ export default function App() {
                           />
                         </div>
 
-                        {/* Right Controls: Volume, Move Up/Down, and Delete */}
+                        {/* Right Controls: Play Cut, Volume, Move Up/Down, and Delete */}
                         <div className="flex items-center gap-2 shrink-0">
+                          {/* Play Cut */}
+                          <button
+                            type="button"
+                            onClick={() => playIndividualTrackSegment(track)}
+                            title={isPlaying ? "עצור השמעה" : "האזן לקטע החתוך"}
+                            className={`p-2 rounded-lg transition-all shrink-0 flex items-center justify-center cursor-pointer ${
+                              isPlaying
+                                ? 'bg-[#ffcc00] text-zinc-950 font-bold shadow animate-pulse'
+                                : (isDarkMode ? 'bg-[#2d2d37] hover:bg-[#434351] text-zinc-300' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-700 shadow-sm')
+                            }`}
+                          >
+                            {isPlaying ? (
+                              <Pause className="w-4 h-4 fill-current" />
+                            ) : (
+                              <Play className="w-4 h-4 fill-current" />
+                            )}
+                          </button>
+
                           {/* Individual Volume Control (Button with Popover) */}
                           <div className="relative">
                             <button
@@ -4430,146 +4323,17 @@ export default function App() {
                         isDarkMode ? 'bg-[#1c1c22]/30' : 'bg-zinc-200/40'
                       }`}>
                         
-                        <div className="flex flex-col md:flex-row items-stretch md:items-center gap-4">
-                          {/* Premium direct manipulation TrackTimeline component */}
-                          <div className="flex-1 min-w-0">
-                            <TrackTimeline
-                              track={track}
-                              onTrimChange={updateTrackTrim}
-                              isDarkMode={isDarkMode}
-                            />
-                          </div>
-
-                          {/* Control Buttons Next to Waveform (Hidden on mobile/tablet, shown on desktop) */}
-                          <div className="hidden md:flex md:flex-col items-stretch md:items-center justify-center gap-2 shrink-0 md:border-r border-zinc-700/10 md:pr-4 min-w-[150px]">
-                            
-                            {/* Play Trimmed Segment button */}
-                            <button
-                              type="button"
-                              onClick={() => playIndividualTrackSegment(track)}
-                              title={isPlaying ? "עצור השמעה" : "האזן לקטע החתוך"}
-                              className={`w-full px-3 py-2 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
-                                isPlaying
-                                  ? 'bg-[#ffcc00] text-zinc-950 shadow animate-pulse'
-                                  : (isDarkMode ? 'bg-[#2d2d37] hover:bg-[#434351] text-zinc-300' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800 shadow-sm')
-                              }`}
-                            >
-                              {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                              <span>{isPlaying ? "עצור השמעה" : "האזן לקטע החתוך"}</span>
-                            </button>
-
-                            {/* Sliders settings toggle icon/text button */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setExpandedTracks(prev => ({
-                                  ...prev,
-                                  [track.id]: !prev[track.id]
-                                }));
-                              }}
-                              className={`w-full px-3 py-2 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer border shrink-0 ${
-                                expandedTracks[track.id]
-                                  ? 'bg-indigo-500/10 border-indigo-500 text-indigo-400'
-                                  : (isDarkMode ? 'bg-[#2d2d37] border-transparent hover:bg-[#434351] text-zinc-400 hover:text-white' : 'bg-zinc-200 border-transparent hover:bg-zinc-300 text-zinc-600 hover:text-zinc-900 shadow-sm')
-                              }`}
-                            >
-                              <Sliders className="w-3.5 h-3.5 text-indigo-500" />
-                              <span>אפשרויות מעברים</span>
-                              {expandedTracks[track.id] ? (
-                                <ChevronUp className="w-3 h-3" />
-                              ) : (
-                                <ChevronDown className="w-3 h-3" />
-                              )}
-                            </button>
-
-                          </div>
+                        <div className="w-full">
+                          {/* Premium direct manipulation TrackTimeline component with inline overlay controls */}
+                          <TrackTimeline
+                            track={track}
+                            onTrimChange={updateTrackTrim}
+                            onChangeField={updateTrackField}
+                            isDarkMode={isDarkMode}
+                          />
                         </div>
 
 
-                         {/* Advanced transitions settings row (collapsible) */}
-                         <div className="hidden md:block">
-                           <AnimatePresence initial={false}>
-                             {expandedTracks[track.id] && (
-                             <motion.div
-                               initial={{ height: 0, opacity: 0 }}
-                               animate={{ height: 'auto', opacity: 1 }}
-                               exit={{ height: 0, opacity: 0 }}
-                               transition={{ duration: 0.2 }}
-                               className="overflow-hidden"
-                             >
-                               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-3.5 mt-1 border-t border-zinc-700/5">
-                                 
-                                 {/* Fade In */}
-                                 <div className="flex flex-col gap-1.5">
-                                   <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                     <span>כניסה רכה (Fade In):</span>
-                                   </label>
-                                   <div className="flex items-center gap-2">
-                                     <input
-                                       type="range"
-                                       min="0"
-                                       max="5"
-                                       step="0.5"
-                                       value={track.fadeInDuration || 0}
-                                       onChange={(e) => updateTrackField(track.id, 'fadeInDuration', Number(e.target.value))}
-                                       className="w-full h-1 accent-emerald-500 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
-                                     />
-                                     <span className={`font-mono text-xs font-bold min-w-[2.5rem] text-left ${isDarkMode ? 'text-zinc-400' : 'text-zinc-700'}`}>
-                                       {(track.fadeInDuration || 0).toFixed(1)} ש'
-                                     </span>
-                                   </div>
-                                 </div>
-
-                                 {/* Fade Out */}
-                                 <div className="flex flex-col gap-1.5">
-                                   <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                                     <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
-                                     <span>יציאה רכה (Fade Out):</span>
-                                   </label>
-                                   <div className="flex items-center gap-2">
-                                     <input
-                                       type="range"
-                                       min="0"
-                                       max="5"
-                                       step="0.5"
-                                       value={track.fadeOutDuration || 0}
-                                       onChange={(e) => updateTrackField(track.id, 'fadeOutDuration', Number(e.target.value))}
-                                       className="w-full h-1 accent-red-400 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
-                                     />
-                                     <span className={`font-mono text-xs font-bold min-w-[2.5rem] text-left ${isDarkMode ? 'text-zinc-400' : 'text-zinc-700'}`}>
-                                       {(track.fadeOutDuration || 0).toFixed(1)} ש'
-                                     </span>
-                                   </div>
-                                 </div>
-
-                                 {/* Silence After */}
-                                 <div className="flex flex-col gap-1.5">
-                                   <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                                     <span>מרווח שקט אחרי:</span>
-                                   </label>
-                                   <div className="flex items-center gap-2">
-                                     <input
-                                       type="range"
-                                       min="0"
-                                       max="10"
-                                       step="0.5"
-                                       value={track.silenceAfter || 0}
-                                       onChange={(e) => updateTrackField(track.id, 'silenceAfter', Number(e.target.value))}
-                                       className="w-full h-1 accent-blue-400 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
-                                     />
-                                     <span className={`font-mono text-xs font-bold min-w-[2.5rem] text-left ${isDarkMode ? 'text-zinc-400' : 'text-zinc-700'}`}>
-                                       {(track.silenceAfter || 0).toFixed(1)} ש'
-                                     </span>
-                                   </div>
-                                 </div>
-
-                               </div>
-                             </motion.div>
-                           )}
-                         </AnimatePresence>
-                       </div>
 
                       </div>
 
@@ -4578,19 +4342,32 @@ export default function App() {
                   );
                 })}
 
-                {/* Migrating "+" Button as the final element in the tracks list */}
-                <div className="flex justify-center mt-4 pt-2 border-t border-dashed border-zinc-700/20">
+                 {/* Split row: Freesound and Add Silence buttons */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-2 border-t border-dashed border-zinc-700/20">
                   <button
                     id="add-music-migrating-btn"
                     onClick={() => setIsFreesoundModalOpen(true)}
-                    className={`w-full py-4 px-6 rounded-xl border-2 border-dashed font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer ${
+                    className={`py-3.5 px-4 rounded-xl border-2 border-dashed font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer ${
                       isDarkMode
                         ? 'border-indigo-500/40 bg-indigo-500/5 hover:bg-indigo-500/15 text-indigo-300 hover:border-indigo-400'
                         : 'border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:border-indigo-500'
                     }`}
                   >
-                    <Plus className="w-5 h-5 text-indigo-500" />
-                    <span>➕ הוסף פתיח, מעבר או אפקט מוזיקלי (Freesound)</span>
+                    <Plus className="w-4 h-4 text-indigo-500" />
+                    <span>הוסף פתיח, מעבר או אפקט מוזיקלי (Freesound)</span>
+                  </button>
+
+                  <button
+                    id="add-silence-btn"
+                    onClick={handleAddSilenceTrack}
+                    className={`py-3.5 px-4 rounded-xl border-2 border-dashed font-bold flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer ${
+                      isDarkMode
+                        ? 'border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/15 text-blue-300 hover:border-blue-400'
+                        : 'border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 hover:border-blue-500'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4 text-blue-500" />
+                    <span>הוסף מרווח שקט (3 שניות)</span>
                   </button>
                 </div>
 
@@ -4630,7 +4407,7 @@ export default function App() {
                     <h4 className="text-sm font-bold">אפשרויות שמע ומעברים מתקדמים</h4>
                     {!isAdvancedOptionsExpanded && (
                       <div className={`text-[10px] mt-0.5 font-bold ${isDarkMode ? 'text-zinc-500' : 'text-zinc-600'}`}>
-                        פורמט: {exportFormat.toUpperCase()} | {useCrossfade ? 'מצב מעבר רך פעיל' : 'ללא מעבר רך'} | {useNormalization ? 'נרמול פעיל' : 'ללא נרמול'} | {useDucking ? 'הנמכת מוזיקה פעילה' : 'ללא הנמכה'}
+                        פורמט: {exportFormat.toUpperCase()} | {useCrossfade ? 'מצב מעבר רך פעיל' : 'ללא מעבר רך'} | {useNormalization ? 'הגנה מפני עיוותים פעילה' : 'ללא הגנה מעיוותים'} | {useDucking ? 'הנמכת מוזיקה פעילה' : 'ללא הנמכה'}
                       </div>
                     )}
                   </div>
@@ -4665,8 +4442,8 @@ export default function App() {
                           >
                             <FileAudio className="w-5 h-5 text-indigo-500" />
                             <div>
-                              <div className="text-xs font-bold">פורמט WAV (מומלץ)</div>
-                              <div className="text-[10px] mt-0.5 text-zinc-500">CD Quality | מהיר ומיידי</div>
+                              <div className="text-xs font-bold">קובץ גדול / מאסטר לא דחוס (WAV)</div>
+                              <div className="text-[10px] mt-0.5 text-zinc-500">איכות אולפן מקורית | קובץ גדול יותר</div>
                             </div>
                           </button>
 
@@ -4681,8 +4458,8 @@ export default function App() {
                           >
                             <Music className="w-5 h-5 text-indigo-500" />
                             <div>
-                              <div className="text-xs font-bold">פורמט WebM / Opus</div>
-                              <div className="text-[10px] mt-0.5 text-zinc-500">קובץ קל ודחוס | מעולה לשיתוף</div>
+                              <div className="text-xs font-bold">קובץ קל לשיתוף (WebM / Opus)</div>
+                              <div className="text-[10px] mt-0.5 text-zinc-500">דחוס וחסכוני ביותר | מהיר להעלאה ושיתוף</div>
                             </div>
                           </button>
                         </div>
@@ -4711,8 +4488,8 @@ export default function App() {
                             className="w-4 h-4 mt-0.5 accent-indigo-500 cursor-pointer"
                           />
                           <div className="text-right">
-                            <div className="text-xs font-bold">נרמול עוצמת קול (Loudness)</div>
-                            <div className="text-[10px] mt-0.5 leading-normal text-zinc-500">עוצמת שמע אחידה ומניעת צרימות</div>
+                            <div className="text-xs font-bold">הגנה מפני עיוותים (Clip Protection)</div>
+                            <div className="text-[10px] mt-0.5 leading-normal text-zinc-500">מניעת צרימות ועיוותי שמע בעוצמות גבוהות</div>
                           </div>
                         </label>
 
@@ -4885,7 +4662,7 @@ export default function App() {
     </section>
 
     {/* Project Import / Export and Database backups */}
-    <div className="lg:col-span-12 mt-6">
+    <div className="hidden sm:block lg:col-span-12 mt-6">
       <ProjectImportExport
         podcastName={podcastName}
         participants={participants}
@@ -4973,16 +4750,16 @@ export default function App() {
             </div>
 
             {/* Category Tabs (Filter Buttons) */}
-            <div className={`p-4 flex flex-col sm:flex-row items-center gap-4 justify-between border-b ${
+            <div className={`p-4 flex flex-col lg:flex-row items-center gap-4 justify-between border-b ${
               isDarkMode ? 'border-zinc-700/30' : 'border-zinc-100'
             }`}>
-              <div className={`flex rounded-xl p-1 gap-1 shrink-0 ${isDarkMode ? 'bg-zinc-950/60' : 'bg-zinc-100'}`}>
+              <div className={`flex flex-wrap sm:flex-nowrap rounded-xl p-1 gap-1 shrink-0 bg-zinc-100 dark:bg-zinc-950/60`}>
                 <button
                   onClick={() => {
                     setFreesoundCategory('intro');
                     setFreesoundSearchQuery('');
                   }}
-                  className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                     freesoundCategory === 'intro'
                       ? 'bg-indigo-600 text-white shadow'
                       : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
@@ -4995,7 +4772,7 @@ export default function App() {
                     setFreesoundCategory('transition');
                     setFreesoundSearchQuery('');
                   }}
-                  className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                     freesoundCategory === 'transition'
                       ? 'bg-indigo-600 text-white shadow'
                       : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
@@ -5008,7 +4785,7 @@ export default function App() {
                     setFreesoundCategory('outro');
                     setFreesoundSearchQuery('');
                   }}
-                  className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                     freesoundCategory === 'outro'
                       ? 'bg-indigo-600 text-white shadow'
                       : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
@@ -5018,30 +4795,46 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Search Box */}
-              <div className="relative w-full sm:max-w-xs">
-                <input
-                  type="text"
-                  placeholder="חיפוש חופשי ב-Freesound..."
-                  value={freesoundSearchQuery}
-                  onChange={(e) => setFreesoundSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery);
-                    }
-                  }}
-                  className={`w-full py-2 pl-3 pr-9 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all ${
-                    isDarkMode 
-                      ? 'bg-zinc-900 text-zinc-100 placeholder-zinc-500 border border-zinc-700/50' 
-                      : 'bg-zinc-50 text-zinc-800 placeholder-zinc-400 border border-zinc-300'
-                  }`}
-                />
+              {/* Controls: More Variety + Free Search */}
+              <div className="flex flex-col sm:flex-row items-center gap-2 w-full lg:w-auto">
                 <button
-                  onClick={() => fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery)}
-                  className="absolute right-2.5 top-2.5 text-zinc-500 hover:text-zinc-300 cursor-pointer flex items-center justify-center"
+                  type="button"
+                  onClick={handleFreesoundMoreVariety}
+                  className={`w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border shadow-sm ${
+                    isDarkMode 
+                      ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700/80 text-indigo-400 hover:text-indigo-300' 
+                      : 'bg-white hover:bg-zinc-100 border-zinc-200 text-indigo-600 hover:text-indigo-700'
+                  }`}
+                  title="בחר מילת חיפוש אקראית אחרת מתוך המאגר"
                 >
-                  <Search className="w-4 h-4" />
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-spin" />
+                  <span>רענון מגוון (חיפוש אקראי)</span>
                 </button>
+
+                <div className="relative w-full sm:max-w-xs">
+                  <input
+                    type="text"
+                    placeholder="חיפוש חופשי ב-Freesound..."
+                    value={freesoundSearchQuery}
+                    onChange={(e) => setFreesoundSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery, freesoundSort);
+                      }
+                    }}
+                    className={`w-full py-2 pl-3 pr-9 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all ${
+                      isDarkMode 
+                        ? 'bg-zinc-900 text-zinc-100 placeholder-zinc-500 border border-zinc-700/50' 
+                        : 'bg-zinc-50 text-zinc-800 placeholder-zinc-400 border border-zinc-300'
+                    }`}
+                  />
+                  <button
+                    onClick={() => fetchFreesoundAssets(freesoundCategory, freesoundSearchQuery, freesoundSort)}
+                    className="absolute right-2.5 top-2.5 text-zinc-500 hover:text-zinc-300 cursor-pointer flex items-center justify-center"
+                  >
+                    <Search className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -5055,80 +4848,95 @@ export default function App() {
                     טוען קבצי שמע מ-Freesound...
                   </p>
                 </div>
-              ) : freesoundResults.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <AlertCircle className={`w-12 h-12 mb-4 ${isDarkMode ? 'text-zinc-700' : 'text-zinc-300'}`} />
-                  <p className={`text-sm font-bold mb-2 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                    לא נמצאו תוצאות או שהשירות אינו זמין
-                  </p>
-                  <p className="text-xs text-zinc-500 max-w-sm">
-                    ייתכן שלא ימצאו תוצאות. מומלץ להשתמש באפשרות "העלאת קבצים" כדי להוסיף קבצי קול משלכם.
-                  </p>
-                </div>
               ) : (
-                <div className="flex flex-col gap-3">
-                  {freesoundResults.map((hit, index) => {
-                    const isPreviewPlaying = previewPlayingId === hit.id;
-                    const durationText = hit.duration ? `${Math.floor(hit.duration)} שניות` : 'שמע';
-                    const tagsList = (hit.tags && hit.tags.length > 0) ? hit.tags.slice(0, 3).join(', ') : 'שמע';
+                (() => {
+                  const filteredHits = freesoundResults.filter((hit) => {
+                    if (freesoundCategory === 'intro' || freesoundCategory === 'outro') {
+                      return hit.duration !== undefined && hit.duration <= 10;
+                    }
+                    return true;
+                  });
 
+                  if (filteredHits.length === 0) {
                     return (
-                      <div
-                        key={`${hit.id}-${index}`}
-                        className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
-                          isDarkMode
-                            ? 'bg-[#272733]/40 hover:bg-[#272733]/80 border-zinc-700/30'
-                            : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200'
-                        }`}
-                      >
-                        {/* Audio Details */}
-                        <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
-                          {/* Play/Preview Button */}
-                          <button
-                            onClick={() => togglePreviewAudio(hit.id, hit.previews['preview-hq-mp3'] || hit.previews['preview-lq-mp3'])}
-                            className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow transition-all cursor-pointer ${
-                              isPreviewPlaying
-                                ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                            }`}
-                            title={isPreviewPlaying ? "עצור השמעה" : "השמעת דוגמה"}
-                          >
-                            {isPreviewPlaying ? (
-                              <Pause className="w-4 h-4 fill-current" />
-                            ) : (
-                              <Play className="w-4 h-4 fill-current mr-0.5" />
-                            )}
-                          </button>
-
-                          <div className="flex flex-col text-right">
-                            <span className="font-bold text-xs sm:text-sm line-clamp-1" title={hit.name}>
-                              {hit.name || tagsList}
-                            </span>
-                            <span className={`text-[10px] sm:text-xs font-bold mt-0.5 ${
-                              isDarkMode ? 'text-zinc-500' : 'text-zinc-500'
-                            }`}>
-                              ⏱️ משך: {durationText} | יוצר: {hit.username || 'Freesound'}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Add to project Button */}
-                        <button
-                          onClick={() => handleAddFreesoundTrack(hit)}
-                          className={`w-full sm:w-auto px-4 py-2 rounded-lg font-bold text-xs shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${
-                            isDarkMode
-                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                              : 'bg-emerald-500 hover:bg-emerald-600 text-white'
-                          }`}
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>הוסף לפרויקט</span>
-                        </button>
-
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <AlertCircle className={`w-12 h-12 mb-4 ${isDarkMode ? 'text-zinc-700' : 'text-zinc-300'}`} />
+                        <p className={`text-sm font-bold mb-2 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                          לא נמצאו תוצאות מתאימות עד 10 שניות או שהשירות אינו זמין
+                        </p>
+                        <p className="text-xs text-zinc-500 max-w-sm">
+                          נסו ללחוץ על "רענון מגוון" או לבצע חיפוש חופשי אחר.
+                        </p>
                       </div>
                     );
-                  })}
-                </div>
+                  }
+
+                  return (
+                    <div className="flex flex-col gap-3">
+                      {filteredHits.map((hit, index) => {
+                        const isPreviewPlaying = previewPlayingId === hit.id;
+                        const durationText = hit.duration ? `${Math.floor(hit.duration)} שניות` : 'שמע';
+                        const tagsList = (hit.tags && hit.tags.length > 0) ? hit.tags.slice(0, 3).join(', ') : 'שמע';
+
+                        return (
+                          <div
+                            key={`${hit.id}-${index}`}
+                            className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
+                              isDarkMode
+                                ? 'bg-[#272733]/40 hover:bg-[#272733]/80 border-zinc-700/30'
+                                : 'bg-zinc-50 hover:bg-zinc-100 border-zinc-200'
+                            }`}
+                          >
+                            {/* Audio Details */}
+                            <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+                              {/* Play/Preview Button */}
+                              <button
+                                onClick={() => togglePreviewAudio(hit.id, hit.previews['preview-hq-mp3'] || hit.previews['preview-lq-mp3'])}
+                                className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow transition-all cursor-pointer ${
+                                  isPreviewPlaying
+                                    ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                }`}
+                                title={isPreviewPlaying ? "עצור השמעה" : "השמעת דוגמה"}
+                              >
+                                {isPreviewPlaying ? (
+                                  <Pause className="w-4 h-4 fill-current" />
+                                ) : (
+                                  <Play className="w-4 h-4 fill-current mr-0.5" />
+                                )}
+                              </button>
+
+                              <div className="flex flex-col text-right">
+                                <span className="font-bold text-xs sm:text-sm line-clamp-1" title={hit.name}>
+                                  {hit.name || tagsList}
+                                </span>
+                                <span className={`text-[10px] sm:text-xs font-bold mt-0.5 ${
+                                  isDarkMode ? 'text-zinc-500' : 'text-zinc-500'
+                                }`}>
+                                  ⏱️ משך: {durationText} | יוצר: {hit.username || 'Freesound'} | רישיון: {hit.license ? hit.license.split('/').pop() : 'CC'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Add to project Button */}
+                            <button
+                              onClick={() => handleAddFreesoundTrack(hit)}
+                              className={`w-full sm:w-auto px-4 py-2 rounded-lg font-bold text-xs shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${
+                                isDarkMode
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                  : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                              }`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>הוסף לפרויקט</span>
+                            </button>
+
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()
               )}
 
             </div>
@@ -5145,6 +4953,193 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Mobile Menu Drawer */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <div className="fixed inset-0 z-55 flex justify-end" style={{ direction: 'rtl' }}>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            
+            {/* Drawer Content */}
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className={`relative w-80 max-w-full h-full flex flex-col p-5 border-r shadow-2xl z-50 overflow-y-auto ${
+                isDarkMode ? 'bg-[#1b1b24] text-zinc-100 border-zinc-800' : 'bg-white text-zinc-850 border-zinc-200'
+              }`}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between pb-4 border-b border-zinc-700/25 mb-4">
+                <span className="font-bold text-base">אפשרויות נוספות</span>
+                <button
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-zinc-800/10 dark:bg-zinc-800 hover:opacity-80 cursor-pointer"
+                >
+                  ✕ סגור
+                </button>
+              </div>
+
+              {/* Upload section inside drawer */}
+              <div className="mb-6 flex flex-col gap-2 text-right">
+                <span className="text-xs font-bold text-zinc-400">העלאת קבצים חיצוניים</span>
+                <label className={`w-full py-3.5 px-4 rounded-xl border border-dashed text-center font-bold flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                  isUploading ? 'opacity-60 cursor-not-allowed' : ''
+                } ${
+                  isDarkMode ? 'bg-[#2a2a37]/80 border-zinc-700 hover:bg-[#323242] text-zinc-200' : 'bg-zinc-50 border-zinc-300 hover:bg-zinc-100 text-zinc-700'
+                }`}>
+                  {isUploading ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                  ) : (
+                    <Upload className="w-4 h-4 text-[#ffcc00]" />
+                  )}
+                  <span>{isUploading ? 'מפענח קבצים...' : 'העלאת קבצים מהמכשיר'}</span>
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    multiple
+                    disabled={isUploading}
+                    onChange={(e) => {
+                      handleFileUpload(e);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Quality & Storage Settings */}
+              <div className="mb-6 p-3.5 rounded-xl border border-zinc-700/20 bg-zinc-950/20 flex flex-col gap-3 text-right">
+                <div className="flex items-center gap-2 text-amber-400 font-bold text-xs justify-end">
+                  <span>הגדרות אולפן ואחסון</span>
+                  <Settings className="w-4 h-4" />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[11px] text-zinc-400">איכות הקלטה:</span>
+                  <div className="grid grid-cols-2 bg-zinc-950/60 rounded-lg p-1 border border-zinc-850 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setRecordingQualityMode('natural')}
+                      className={`py-1.5 text-[10px] font-black rounded transition-all cursor-pointer ${
+                        recordingQualityMode === 'natural'
+                          ? 'bg-[#ffcc00] text-zinc-950 shadow'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      מצב סטודיו
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRecordingQualityMode('classroom')}
+                      className={`py-1.5 text-[10px] font-black rounded transition-all cursor-pointer ${
+                        recordingQualityMode === 'classroom'
+                          ? 'bg-[#ffcc00] text-zinc-950 shadow'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      מצב כיתה
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-zinc-850">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-[11px] text-zinc-400">שטח פנוי בדפדפן:</span>
+                    <span className="font-bold text-[#ffcc00] font-mono">
+                      {storageEstimate 
+                        ? `${(storageEstimate.quotaMb - storageEstimate.usedMb).toLocaleString()} MB` 
+                        : 'בחישוב...'}
+                    </span>
+                  </div>
+                  {storageEstimate && (
+                    <div className="w-full bg-zinc-900 rounded-full h-1 overflow-hidden border border-zinc-800/40">
+                      <div 
+                        className="bg-amber-500 h-full rounded-full transition-all duration-300" 
+                        style={{ width: `${Math.max(2, 100 - storageEstimate.pct)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Import/Export / Reset */}
+              <div className="mb-6 flex flex-col gap-2 text-right">
+                <span className="text-xs font-bold text-zinc-400">גיבוי וניהול פרויקט</span>
+                
+                <button
+                  onClick={() => {
+                    exportProjectToZip();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
+                    isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
+                  }`}
+                  style={{ minHeight: '44px' }}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>ייצוא לפרויקט ZIP 📦</span>
+                </button>
+
+                <label className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer text-center ${
+                  isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
+                }`} style={{ minHeight: '44px' }}>
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>טעינת פרויקט מ-ZIP 📁</span>
+                  <input
+                    type="file"
+                    accept=".zip"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        importProjectFromZip(e.target.files[0]);
+                      }
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="hidden"
+                  />
+                </label>
+
+                <button
+                  onClick={() => {
+                    handleClearProject();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full py-2 px-3 rounded-lg text-xs font-bold bg-red-600/10 hover:bg-red-600/20 border border-red-500/25 text-red-400 flex items-center justify-center gap-1.5 cursor-pointer"
+                  style={{ minHeight: '44px' }}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>איפוס וניקוי פרויקט ⚠️</span>
+                </button>
+              </div>
+
+              {/* Recovery Banner if exists inside mobile drawer too */}
+              {pendingSessions.length > 0 && (
+                <div className="p-3 bg-amber-950/20 border border-amber-800/40 rounded-xl flex flex-col gap-2 text-right">
+                  <span className="text-[10px] font-bold text-amber-400">נמצאה הקלטה בלתי גמורה!</span>
+                  <button
+                    onClick={() => {
+                      recoverSession(pendingSessions[0]);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="w-full py-1.5 bg-amber-500 text-zinc-950 text-[10px] font-black rounded-lg cursor-pointer"
+                    style={{ minHeight: '44px' }}
+                  >
+                    שחזר שמע
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Floating Toast Notifications */}
       <div className="fixed bottom-6 left-6 z-50 flex flex-col gap-2.5 w-[360px] max-w-[calc(100vw-2rem)]" style={{ direction: 'rtl' }}>
