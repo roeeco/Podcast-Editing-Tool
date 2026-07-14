@@ -115,14 +115,10 @@ export async function renderPodcastMix(
   // Initialize OfflineAudioContext for rendering
   const offlineCtx = new OfflineAudioContext(channels, totalSamples, sampleRate);
 
-  // Gentle dynamics compressor at the end to act as a polished master limiter
-  const compressor = offlineCtx.createDynamicsCompressor();
-  compressor.threshold.setValueAtTime(-12, 0); // start compression at -12dB
-  compressor.knee.setValueAtTime(12, 0);       // soft knee
-  compressor.ratio.setValueAtTime(1.5, 0);     // very gentle ratio (1.5:1)
-  compressor.attack.setValueAtTime(0.003, 0);  // 3ms attack
-  compressor.release.setValueAtTime(0.25, 0);  // 250ms release for natural decay
-  compressor.connect(offlineCtx.destination);
+  // Transparent mix bus
+  const mixBus = offlineCtx.createGain();
+  mixBus.gain.setValueAtTime(1, 0);
+  mixBus.connect(offlineCtx.destination);
 
   // Gather speech intervals for automatic ducking
   const speechIntervals = layout
@@ -141,7 +137,7 @@ export async function renderPodcastMix(
     source.buffer = buffer;
 
     const trackGain = offlineCtx.createGain();
-    trackGain.connect(compressor);
+    trackGain.connect(mixBus);
     source.connect(trackGain);
 
     // Fade-in calculations
@@ -152,17 +148,20 @@ export async function renderPodcastMix(
     const steadyStart = startTime + fadeInTime;
     const steadyEnd = endTime - fadeOutTime;
 
-    // Automate baseline track volume
-    trackGain.gain.setValueAtTime(0, startTime);
+    // Collect gain keyframes chronologically to prevent conflicting transitions or jumps
+    const keyframes: { time: number; value: number }[] = [];
 
-    // Apply Fade-In
+    // 1. Initial zero volume at start
+    keyframes.push({ time: startTime, value: 0 });
+
+    // 2. Fade in transition
     if (fadeInTime > 0) {
-      trackGain.gain.linearRampToValueAtTime(track.volume, steadyStart);
+      keyframes.push({ time: steadyStart, value: track.volume });
     } else {
-      trackGain.gain.setValueAtTime(track.volume, startTime);
+      keyframes.push({ time: startTime + 0.001, value: track.volume });
     }
 
-    // Apply Ducking if enabled and it's an effect track
+    // 3. Ducking events (if applicable)
     if (options.useDucking && track.isEffect && speechIntervals.length > 0) {
       // Find speech overlaps
       const duckIntervals: { start: number; end: number }[] = [];
@@ -200,33 +199,65 @@ export async function renderPodcastMix(
           start: Math.max(steadyStart, d.start),
           end: Math.min(steadyEnd, d.end)
         }))
-        .filter((d) => d.start < d.end);
+        .filter((d) => d.start + 0.1 < d.end);
 
-      // Automate ducking (25% volume)
+      // Generate duck keyframes using gentle 0.25s linear ramps to prevent audio clicks
       for (const duck of mergedDucksFiltered) {
+        const rampDuration = 0.25;
         const rampDownStart = duck.start;
-        const rampDownEnd = Math.min(duck.end, duck.start + 0.3);
-        const rampUpStart = Math.max(rampDownEnd, duck.end);
-        const rampUpEnd = rampUpStart + 0.3;
+        const rampDownEnd = Math.min(duck.end, duck.start + rampDuration);
+        const rampUpStart = Math.max(rampDownEnd, duck.end - rampDuration);
+        const rampUpEnd = duck.end;
 
-        trackGain.gain.setValueAtTime(track.volume, rampDownStart);
-        trackGain.gain.linearRampToValueAtTime(track.volume * 0.25, rampDownEnd);
-
-        trackGain.gain.setValueAtTime(track.volume * 0.25, rampUpStart);
-        trackGain.gain.linearRampToValueAtTime(track.volume, rampUpEnd);
+        keyframes.push({ time: rampDownStart, value: track.volume });
+        keyframes.push({ time: rampDownEnd, value: track.volume * 0.25 });
+        keyframes.push({ time: rampUpStart, value: track.volume * 0.25 });
+        keyframes.push({ time: rampUpEnd, value: track.volume });
       }
     }
 
-    // Apply Fade-Out
+    // 4. Fade out transition
     if (fadeOutTime > 0 && steadyEnd > steadyStart) {
-      trackGain.gain.setValueAtTime(track.volume, steadyEnd);
-      trackGain.gain.linearRampToValueAtTime(0, endTime);
+      keyframes.push({ time: steadyEnd, value: track.volume });
+      keyframes.push({ time: endTime, value: 0 });
     } else {
-      trackGain.gain.setValueAtTime(track.volume, endTime);
+      keyframes.push({ time: endTime - 0.001, value: track.volume });
+      keyframes.push({ time: endTime, value: 0 });
+    }
+
+    // 5. Apply the keyframes to the AudioParam chronologically
+    keyframes.sort((a, b) => a.time - b.time);
+
+    const cleanKeyframes: { time: number; value: number }[] = [];
+    let lastTime = -1;
+    for (const k of keyframes) {
+      const clampedTime = Math.max(startTime, Math.min(endTime, k.time));
+      // Ensure strictly increasing times for reliable Web Audio API scheduling
+      if (clampedTime > lastTime + 0.0001) {
+        cleanKeyframes.push({ time: clampedTime, value: k.value });
+        lastTime = clampedTime;
+      }
+    }
+
+    if (cleanKeyframes.length > 0) {
+      trackGain.gain.setValueAtTime(cleanKeyframes[0].value, cleanKeyframes[0].time);
+      for (let kIdx = 1; kIdx < cleanKeyframes.length; kIdx++) {
+        trackGain.gain.linearRampToValueAtTime(cleanKeyframes[kIdx].value, cleanKeyframes[kIdx].time);
+      }
     }
 
     // Start playback
-    source.start(startTime, track.trimStart, trimDuration);
+    const sourceOffset = track.isSilence
+      ? 0
+      : Math.max(0, Math.min(track.trimStart, Math.max(0, buffer.duration - 0.001)));
+
+    const safeDuration = track.isSilence
+      ? trimDuration
+      : Math.max(0, Math.min(trimDuration, buffer.duration - sourceOffset));
+
+    if (safeDuration > 0) {
+      source.start(startTime, sourceOffset, safeDuration);
+    }
   }
 
   // Render the audio graph asynchronously

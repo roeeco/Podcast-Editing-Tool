@@ -412,11 +412,7 @@ export function loadSettingsFromLocalStorage(): AppSettings | null {
 }
 
 export function getConsentStatus(): boolean {
-  try {
-    return localStorage.getItem('smbk_storage_consent_accepted') === 'true';
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 export function setConsentStatus(accepted: boolean): void {

@@ -14,6 +14,7 @@ import {
   Volume2,
   FileAudio,
   RotateCcw,
+  RefreshCw,
   Plus,
   BookOpen,
   Sparkles,
@@ -49,7 +50,6 @@ import { WorkflowRail } from './components/WorkflowRail';
 import { ScriptEditor } from './components/ScriptEditor';
 import { Teleprompter } from './components/Teleprompter';
 import { TrackList } from './components/TrackList';
-import { ProjectImportExport } from './components/ProjectImportExport';
 import {
   getAllTracksFromDB,
   saveTrackToDB,
@@ -83,8 +83,8 @@ export default function App() {
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
 
-  // Main Panel Tab: 'tracks' for editing tracks, 'text' for working with the text/script
-  const [mainTab, setMainTab] = useState<'text' | 'tracks'>('text');
+  // Main Panel Tab: 'tracks' for editing tracks, 'text' for editing the script, 'recording' for reading and recording
+  const [mainTab, setMainTab] = useState<'text' | 'recording' | 'tracks'>('text');
 
   // Toggle for showing example podcast scripts
   const [showExamples, setShowExamples] = useState<boolean>(false);
@@ -174,6 +174,7 @@ export default function App() {
   // Premium Teleprompter states
   const [speechRate, setSpeechRate] = useState<'slow' | 'normal' | 'fast'>('normal');
   const [activeWordIndex, setActiveWordIndex] = useState<number>(0);
+  const [isTeleprompterSettingsExpanded, setIsTeleprompterSettingsExpanded] = useState<boolean>(false);
 
   // Drag-and-drop state for track cards
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -204,6 +205,8 @@ export default function App() {
   } | null>(null);
 
   // Crash Recovery and Storage Estimations
+  const [pendingNameTrackId, setPendingNameTrackId] = useState<string | null>(null);
+  const [pendingTrackName, setPendingTrackName] = useState<string>("");
   const [pendingSessions, setPendingSessions] = useState<any[]>([]);
   const [isRecovering, setIsRecovering] = useState<boolean>(false);
   const [storageEstimate, setStorageEstimate] = useState<{ usedMb: number; quotaMb: number; pct: number } | null>(null);
@@ -312,7 +315,21 @@ export default function App() {
         throw new Error(`Failed to fetch from proxy, status: ${response.status}`);
       }
       const data = await response.json();
-      setFreesoundResults(data.results || []);
+      const rawResults = data.results || [];
+      const filteredResults = rawResults.filter((hit: any) => {
+        const duration = hit.duration;
+        if (duration === undefined || duration === null || typeof duration !== 'number' || isNaN(duration)) {
+          return true;
+        }
+        if (category === 'intro' || category === 'outro') {
+          return duration <= 10;
+        }
+        if (category === 'transition') {
+          return duration <= 15;
+        }
+        return true;
+      });
+      setFreesoundResults(filteredResults);
     } catch (error: any) {
       console.error('Error loading Freesound assets:', error);
       setErrorMsg('שגיאה בטעינת קטעי שמע מ-Freesound. אנא נסה שוב.');
@@ -512,6 +529,20 @@ export default function App() {
   const isScrolled = true;
   const showHeader = true;
 
+  const [headerScrolledDown, setHeaderScrolledDown] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setHeaderScrolledDown(window.scrollY > 20);
+    };
+    window.addEventListener('scroll', handleScroll);
+    // Initial check
+    handleScroll();
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
   // Synchronize AI Assistant Output Presentation Format with the editing style (scriptMode) above the panel
   useEffect(() => {
     if (scriptMode === 'text') {
@@ -523,14 +554,10 @@ export default function App() {
     }
   }, [scriptMode]);
 
-  // Load saved settings and tracks on initial load if consent is accepted
+  // Load saved settings and tracks on initial load directly
   useEffect(() => {
-    const hasConsented = getConsentStatus();
-    if (!hasConsented) {
-      setShowConsentModal(true);
-    } else {
-      loadSavedData();
-    }
+    setConsentStatus(true);
+    loadSavedData();
   }, []);
 
   const loadSavedData = async () => {
@@ -812,7 +839,7 @@ export default function App() {
   // 2. Handle script scrolling and word highlighting (Teleprompter)
   useEffect(() => {
     let intervalId: number | null = null;
-    if (isScrolling && teleprompterMode) {
+    if (isScrolling && mainTab === 'recording' && scriptMode === 'text') {
       // Milliseconds per word based on selected speed (optimized: slow is faster, normal is slower)
       const msPerWord = speechRate === 'slow' ? 520 : speechRate === 'normal' ? 460 : 350;
       
@@ -833,11 +860,11 @@ export default function App() {
         clearInterval(intervalId);
       }
     };
-  }, [isScrolling, teleprompterMode, speechRate, parsedWords]);
+  }, [isScrolling, mainTab, scriptMode, speechRate, parsedWords]);
 
   // Automatically scroll the container to keep the active word in the upper third of the box
   useEffect(() => {
-    if (teleprompterMode && isScrolling) {
+    if (isScrolling && mainTab === 'recording' && scriptMode === 'text') {
       const activeWordElem = document.getElementById(`word-${activeWordIndex}`);
       if (activeWordElem && scrollContainerRef.current) {
         const container = scrollContainerRef.current;
@@ -851,7 +878,12 @@ export default function App() {
         });
       }
     }
-  }, [activeWordIndex, teleprompterMode, isScrolling]);
+  }, [activeWordIndex, mainTab, scriptMode, isScrolling]);
+
+  // Reset scrolling state on tab or mode change to keep things clean
+  useEffect(() => {
+    setIsScrolling(false);
+  }, [mainTab, scriptMode]);
 
   // Handle Recording Timer and microphone level visualization
   useEffect(() => {
@@ -919,6 +951,23 @@ export default function App() {
     const remainingSecs = Math.floor(secs % 60);
     const pad = (num: number) => num.toString().padStart(2, '0');
     return `${pad(mins)}:${pad(remainingSecs)}`;
+  };
+
+  const getTrackColorClass = (trackName: string, isEffect: boolean) => {
+    if (isEffect) {
+      return isDarkMode ? 'bg-purple-500' : 'bg-purple-400';
+    }
+    const name = trackName.toLowerCase();
+    if (name.includes('פתיח') || name.includes('intro')) {
+      return 'bg-indigo-500';
+    }
+    if (name.includes('גוף') || name.includes('body')) {
+      return 'bg-emerald-500';
+    }
+    if (name.includes('סיכום') || name.includes('outro') || name.includes('summary')) {
+      return 'bg-amber-500';
+    }
+    return isDarkMode ? 'bg-[#ffcc00]' : 'bg-zinc-400';
   };
 
   // Live microphone level drawing
@@ -1033,7 +1082,23 @@ export default function App() {
       recordingSessionIdRef.current = recordingSessionId;
       recordingStartTimeRef.current = Date.now();
 
-      const trackName = `הקלטה מהמיקרופון - טייק ${tracks.filter((t) => t.name.includes('הקלטה')).length + 1}`;
+      const existingTakes = tracks.filter(t => !t.isEffect && !t.isSilence);
+      let maxNum = 0;
+      for (const t of existingTakes) {
+        const matchTake = t.name.match(/טייק\s+(\d+)/);
+        if (matchTake) {
+          const num = parseInt(matchTake[1], 10);
+          if (!isNaN(num) && num > maxNum) maxNum = num;
+        } else {
+          const matchPrefix = t.name.match(/^(\d+)/);
+          if (matchPrefix) {
+            const num = parseInt(matchPrefix[1], 10);
+            if (!isNaN(num) && num > maxNum) maxNum = num;
+          }
+        }
+      }
+      const nextNumber = maxNum + 1;
+      const trackName = `טייק ${String(nextNumber).padStart(2, '0')}`;
 
       // Initialize recording session in IndexedDB
       const sessionRecord = {
@@ -1139,6 +1204,8 @@ export default function App() {
 
           setTracks((prev) => [...prev, newTrack]);
           setSuccessMsg('ההקלטה נשמרה בהצלחה והתווספה לרשימת הרצועות!');
+          setPendingNameTrackId(newTrack.id);
+          setPendingTrackName(newTrack.name);
 
           // Finalize and cleanup the session chunks
           await markSessionFinalized(sessionId, newTrack.id);
@@ -1447,11 +1514,6 @@ export default function App() {
   const playIndividualFullTrack = (track: PodcastTrack) => {
     getAudioContext(); // user activation
 
-    if (track.isMissingAudio || !track.audioUrl) {
-      setErrorMsg('לא ניתן להשמיע רצועה זו כיוון שקובץ השמע המקורי שלה חסר או פגום.');
-      return;
-    }
-
     if (playingFullTrackId === track.id) {
       stopIndividualFullTrack();
       return;
@@ -1459,6 +1521,21 @@ export default function App() {
 
     stopIndividualFullTrack();
     stopIndividualTrack();
+
+    if (track.isSilence) {
+      setPlayingFullTrackId(track.id);
+      const durationSec = track.duration || 5;
+      const timeoutId = setTimeout(() => {
+        stopIndividualFullTrack();
+      }, durationSec * 1000);
+      (window as any)[`silenceFullTimeout_${track.id}`] = timeoutId;
+      return;
+    }
+
+    if (track.isMissingAudio || !track.audioUrl) {
+      setErrorMsg('לא ניתן להשמיע רצועה זו כיוון שקובץ השמע המקורי שלה חסר או פגום.');
+      return;
+    }
 
     const audio = new Audio(track.audioUrl);
     audio.volume = track.volume;
@@ -1478,9 +1555,16 @@ export default function App() {
   };
 
   const stopIndividualFullTrack = () => {
-    if (playingFullTrackId && audioElementsRef.current[playingFullTrackId + '_full']) {
-      audioElementsRef.current[playingFullTrackId + '_full'].pause();
-      delete audioElementsRef.current[playingFullTrackId + '_full'];
+    if (playingFullTrackId) {
+      if (audioElementsRef.current[playingFullTrackId + '_full']) {
+        audioElementsRef.current[playingFullTrackId + '_full'].pause();
+        delete audioElementsRef.current[playingFullTrackId + '_full'];
+      }
+      const silFullId = `silenceFullTimeout_${playingFullTrackId}`;
+      if ((window as any)[silFullId]) {
+        clearTimeout((window as any)[silFullId]);
+        delete (window as any)[silFullId];
+      }
     }
     setPlayingFullTrackId(null);
   };
@@ -2480,75 +2564,7 @@ export default function App() {
       isDarkMode ? 'bg-[#1a1a24] text-zinc-100' : 'bg-[#f4f4f8] text-zinc-900'
     }`}>
       
-      {/* Privacy and Storage Consent Modal */}
-      <AnimatePresence>
-        {showConsentModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 overflow-y-auto"
-            dir="rtl"
-          >
-            <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className={`relative max-w-lg w-full rounded-2xl p-6 md:p-8 shadow-2xl border text-right ${
-                isDarkMode 
-                  ? 'bg-[#1e1e24] text-zinc-100 border-zinc-800' 
-                  : 'bg-white text-zinc-800 border-zinc-200'
-              }`}
-            >
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-amber-500/10 text-amber-500">
-                  <Info className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className={`text-xl md:text-2xl font-black ${isDarkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
-                    שמירת עבודה והגנה על הפרטיות
-                  </h2>
-                  <p className="text-xs opacity-70">
-                    MTEACH Podcast Studio
-                  </p>
-                </div>
-              </div>
 
-              <div className="space-y-4 text-sm md:text-base leading-relaxed opacity-90">
-                <p>
-                  האתר משתמש באחסון המקומי של הדפדפן (Local Storage ו-IndexedDB) כדי לשמור באופן אוטומטי את ההקלטות שלכם, כרטיסיות השיחה, והטקסט שכתבתם.
-                </p>
-                <p className="font-bold text-[#ffcc00]">
-                  כך, גם אם תצאו בטעות מהאתר או תרעננו את הדף, כל העבודה שלכם תישמר ותוכלו להמשיך בדיוק מאותה נקודה.
-                </p>
-                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-[#252530] border-zinc-800 text-zinc-300' : 'bg-zinc-50 border-zinc-200 text-zinc-700'}`}>
-                  <p className="font-bold flex items-center gap-2 mb-1.5">
-                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
-                    המידע שלכם נשאר אצלכם במכשיר:
-                  </p>
-                  <p className="text-xs md:text-sm">
-                    כל קבצי השמע והטקסטים נשמרים <strong>אך ורק מקומית במכשיר האישי שלכם</strong>. אין שום העלאה של חומרי ההקלטה לשרתים חיצוניים, והפרטיות שלכם מוגנת ב-100%.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-8 flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={() => {
-                    setConsentStatus(true);
-                    setShowConsentModal(false);
-                    loadSavedData();
-                  }}
-                  className="w-full bg-[#ffcc00] text-[#1a1a24] font-bold py-3.5 px-6 rounded-xl hover:bg-[#ffe066] transition-all duration-200 shadow-lg shadow-amber-500/10 hover:shadow-amber-500/20 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Check className="w-5 h-5" />
-                  <span>אני מאשר/ת ומבין/ה – בואו נתחיל!</span>
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Custom Confirmation Modal */}
       <AnimatePresence>
@@ -2626,92 +2642,59 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Upload Audio Tracks Block */}
-            <label className={`hidden sm:flex items-center gap-1.5 rounded-xl border transition-all font-black cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242] text-zinc-300 hover:text-white ${
-              isUploading ? 'opacity-60 cursor-not-allowed' : ''
-            } ${
-              isScrolled ? 'px-2.5 py-1.5 text-[10px]' : 'px-3 py-2 text-xs'
-            }`}>
-              {isUploading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
-              ) : (
-                <Upload className="w-3.5 h-3.5 text-[#ffcc00]" />
+            {/* Dynamic Scrolled Header Recording Control */}
+            <AnimatePresence>
+              {mainTab === 'recording' && headerScrolledDown && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, x: -12 }}
+                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, x: -12 }}
+                  className="flex items-center gap-2"
+                >
+                  {isRecording ? (
+                    <div className="flex items-center gap-2.5 bg-red-950/45 border border-red-800/50 rounded-xl p-1 pr-3 shadow-lg shadow-red-500/5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                        <span className="text-xs font-black text-red-400 font-mono">
+                          {formatTime(recordingSeconds)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={stopRecording}
+                        className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white font-black rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer text-xs"
+                      >
+                        <Square className="w-2.5 h-2.5 fill-white text-white" />
+                        <span>עצור</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={startRecording}
+                      className="bg-red-600 hover:bg-red-500 text-white active:scale-[0.98] font-black rounded-xl transition-all flex items-center gap-1.5 px-3 py-2 text-xs cursor-pointer shadow-md shadow-red-600/15"
+                    >
+                      <Mic className="w-3.5 h-3.5 text-white animate-pulse" />
+                      <span>הקלטה חדשה</span>
+                    </button>
+                  )}
+                </motion.div>
               )}
-              <span className="hidden sm:inline">{isUploading ? 'מפענח...' : 'העלאת קבצים'}</span>
-              <span className="sm:hidden">{isUploading ? '...' : 'העלאה'}</span>
-              <input
-                type="file"
-                accept="audio/*"
-                multiple
-                disabled={isUploading}
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-            </label>
-
-            {/* Direct browser recording container */}
-            <div className={`rounded-xl transition-all border flex items-center gap-2 transition-all duration-300 ${
-              isRecording 
-                ? 'bg-red-950/20 border-red-800/40 shadow-lg shadow-red-500/5' 
-                : 'bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242]'
-            } ${
-              isScrolled ? 'p-1' : 'p-1.5'
-            }`}>
-              {isRecording ? (
-                <div className="flex items-center gap-1.5 sm:gap-2.5">
-                  <div className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
-                    <span className="text-[11px] font-bold text-red-400 bg-red-950/40 px-1.5 py-0.5 rounded animate-pulse font-mono">
-                      {formatTime(recordingSeconds)}
-                    </span>
-                  </div>
-                  <canvas
-                    ref={micCanvasRef}
-                    className="hidden sm:block w-16 sm:w-28 h-6 bg-[#1c1c22]/90 rounded overflow-hidden border border-zinc-700/20"
-                    width={120}
-                    height={24}
-                  />
-                  <button
-                    onClick={stopRecording}
-                    className="px-2 py-1 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer text-xs min-h-[38px] sm:min-h-0"
-                  >
-                    <Square className="w-2.5 h-2.5 fill-white text-white" />
-                    <span className="font-bold">עצור</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 sm:gap-2.5">
-                  <button
-                    onClick={startRecording}
-                    className={`bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-md shadow-red-600/10 font-bold min-h-[38px] sm:min-h-0 ${
-                      isScrolled ? 'px-2 py-1.5 text-[10px]' : 'px-2.5 py-1.5 text-xs'
-                    }`}
-                  >
-                    <Mic className="w-3 h-3 text-white animate-pulse" />
-                    <span>הקלטה חדשה</span>
-                  </button>
-
-                  <div className="hidden lg:flex flex-col text-right justify-center border-r border-zinc-800/60 pr-2.5 mr-0.5 leading-none">
-                    <span className="text-[9px] font-bold opacity-80 text-zinc-300">שמירה אוטומטית</span>
-                    <span className="text-[7px] text-zinc-400 leading-none">בזמן הקלטה</span>
-                  </div>
-                </div>
-              )}
-            </div>
+            </AnimatePresence>
 
             {/* Cog settings button with popover */}
             <div className="hidden sm:block relative">
               <button
                 type="button"
                 onClick={() => setShowSettingsPopover(!showSettingsPopover)}
-                className={`p-1.5 sm:p-2 rounded-xl transition-all border flex items-center justify-center cursor-pointer ${
+                className={`p-2 rounded-xl transition-all border flex items-center justify-center cursor-pointer min-h-[44px] min-w-[44px] ${
                   showSettingsPopover 
                     ? 'bg-amber-400/10 border-amber-500 text-amber-400' 
                     : 'bg-[#2a2a37]/80 border-zinc-700/40 text-zinc-400 hover:text-white hover:bg-[#323242]'
                 }`}
                 title="הגדרות אולפן ואחסון"
               >
-                <Settings className={`w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200 ${showSettingsPopover ? 'rotate-45' : ''}`} />
+                <Settings className={`w-5 h-5 transition-transform duration-200 ${showSettingsPopover ? 'rotate-45' : ''}`} />
               </button>
 
               <AnimatePresence>
@@ -2728,21 +2711,21 @@ export default function App() {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 10, scale: 0.95 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute left-0 mt-2 w-72 bg-[#1f1f2a] border border-zinc-700/50 rounded-xl shadow-2xl p-4 z-50 text-right text-zinc-200"
+                      className="absolute left-0 mt-2 w-[440px] bg-[#1f1f2a] border border-zinc-700/50 rounded-2xl shadow-2xl p-6 z-50 text-right text-zinc-200 flex flex-col gap-5"
                     >
-                      <h4 className="font-black text-xs text-amber-400 mb-3 border-b border-zinc-800 pb-1.5 flex items-center justify-between gap-1.5">
-                        <span>הגדרות אולפן ואחסון</span>
-                        <Settings className="w-3.5 h-3.5 text-amber-500" />
+                      <h4 className="font-black text-sm text-amber-400 border-b border-zinc-800 pb-3 flex items-center justify-between gap-1.5">
+                        <span className="text-sm">הגדרות אולפן ואחסון פרויקט</span>
+                        <Settings className="w-4 h-4 text-amber-500" />
                       </h4>
 
                       {/* Studio / Class Mode Switch */}
-                      <div className="mb-4">
-                        <label className="block text-[11px] font-black text-zinc-300 mb-1.5">מצב איכות הקלטה:</label>
-                        <div className="grid grid-cols-2 bg-zinc-950/60 rounded-lg p-1 border border-zinc-800 gap-1 mb-2.5">
+                      <div className="flex flex-col gap-2">
+                        <label className="block text-xs font-black text-zinc-300">מצב איכות הקלטה:</label>
+                        <div className="grid grid-cols-2 bg-zinc-950/60 rounded-xl p-1 border border-zinc-800 gap-1.5">
                           <button
                             type="button"
                             onClick={() => setRecordingQualityMode('natural')}
-                            className={`py-1.5 text-xs font-black rounded transition-all cursor-pointer ${
+                            className={`py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
                               recordingQualityMode === 'natural'
                                 ? 'bg-[#ffcc00] text-zinc-950 shadow-md'
                                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
@@ -2753,7 +2736,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => setRecordingQualityMode('classroom')}
-                            className={`py-1.5 text-xs font-black rounded transition-all cursor-pointer ${
+                            className={`py-2 text-xs font-black rounded-lg transition-all cursor-pointer ${
                               recordingQualityMode === 'classroom'
                                 ? 'bg-[#ffcc00] text-zinc-950 shadow-md'
                                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
@@ -2763,21 +2746,101 @@ export default function App() {
                           </button>
                         </div>
                         
-                        <div className="space-y-2 text-[10px] bg-zinc-950/30 p-2 rounded-lg border border-zinc-800/40 leading-relaxed text-zinc-400">
+                        <div className="space-y-2.5 text-xs bg-zinc-950/30 p-3 rounded-xl border border-zinc-800/40 leading-relaxed text-zinc-400">
                           <div>
                             <span className="font-bold text-zinc-200">🎙️ מצב סטודיו:</span>
-                            <p className="mt-0.5 text-[9px]">איכות שמע מלאה, טבעית ומקסימלית ללא סינון רעשים. מומלץ להקלטה בסביבה שקטה או עם מיקרופון מקצועי.</p>
+                            <p className="mt-1 text-[11px] leading-relaxed">איכות שמע מלאה, טבעית ומקסימלית ללא סינון רעשים. מומלץ להקלטה בסביבה שקטה או עם מיקרופון מקצועי.</p>
                           </div>
                           <div>
                             <span className="font-bold text-zinc-200">🏫 מצב כיתה:</span>
-                            <p className="mt-0.5 text-[9px]">סינון רעשים אקטיבי וחכם המותאם במיוחד לכיתה רועשת, לדיבור קרוב ולצמצום רעשי רקע של תלמידים אחרים.</p>
+                            <p className="mt-1 text-[11px] leading-relaxed">סינון רעשים אקטיבי וחכם המותאם במיוחד לכיתה רועשת, לדיבור קרוב ולצמצום רעשי רקע של תלמידים אחרים.</p>
                           </div>
                         </div>
                       </div>
 
+                      {/* Backup & Project Actions */}
+                      <div className="border-t border-zinc-800/60 pt-4 flex flex-col gap-3">
+                        <label className="block text-xs font-black text-zinc-300">גיבוי וניהול פרויקט:</label>
+                        
+                        <div className="grid grid-cols-2 gap-2.5">
+                          {/* Export ZIP */}
+                          <button
+                            onClick={exportProjectToZip}
+                            disabled={isExporting}
+                            className={`flex items-center justify-center gap-2 font-bold text-xs py-2.5 px-3 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer ${
+                              isDarkMode 
+                                ? 'bg-amber-400/95 hover:bg-amber-400 text-zinc-900' 
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                            }`}
+                            style={{ minHeight: '44px' }}
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>{isExporting ? 'מייצא פרויקט...' : 'שמירת פרויקט (ZIP)'}</span>
+                          </button>
+
+                          {/* Import ZIP */}
+                          <label className={`flex items-center justify-center gap-2 font-bold text-xs py-2.5 px-3 rounded-lg transition-all active:scale-95 cursor-pointer border text-center ${
+                            isDarkMode 
+                              ? 'bg-zinc-800 hover:bg-zinc-750 text-zinc-100 border-zinc-700/60' 
+                              : 'border-slate-300 hover:bg-slate-50 text-slate-700'
+                          }`} style={{ minHeight: '44px' }}>
+                            <Upload className="w-4 h-4" />
+                            <span>{isImporting ? 'טוען פרויקט...' : 'טעינת פרויקט מ-ZIP'}</span>
+                            <input
+                              type="file"
+                              accept=".zip"
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files[0]) {
+                                  importProjectFromZip(e.target.files[0]);
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+
+                        {/* Reset project */}
+                        <button
+                          onClick={handleClearProject}
+                          className={`w-full flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-3 rounded-lg transition-all cursor-pointer border ${
+                            isDarkMode 
+                              ? 'bg-rose-950/20 hover:bg-rose-950/40 border-rose-950/60 text-rose-300' 
+                              : 'bg-rose-50 hover:bg-rose-100 border-rose-100 text-rose-700'
+                          }`}
+                          style={{ minHeight: '44px' }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                          <span>איפוס וניקוי פרויקט ⚠️</span>
+                        </button>
+                      </div>
+
+                      {/* Recover Pending Sessions inside desktop popup */}
+                      {pendingSessions.length > 0 && (
+                        <div className="p-3 bg-amber-950/20 border border-amber-800/40 rounded-xl flex flex-col gap-2 text-right">
+                          <span className="text-xs font-bold text-amber-400">נמצאה הקלטה בלתי גמורה!</span>
+                          <div className="flex items-center gap-2 justify-between">
+                            <button
+                              onClick={() => recoverSession(pendingSessions[0])}
+                              className="flex-1 py-1.5 bg-amber-500 text-zinc-950 text-xs font-black rounded-lg cursor-pointer flex items-center justify-center gap-1"
+                              style={{ minHeight: '40px' }}
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${isRecovering ? 'animate-spin' : ''}`} />
+                              <span>שחזר שמע</span>
+                            </button>
+                            <button
+                              onClick={() => discardSession(pendingSessions[0].id)}
+                              className="px-3 py-1.5 border border-zinc-700/60 hover:bg-zinc-800/80 text-zinc-300 text-xs font-bold rounded-lg cursor-pointer"
+                              style={{ minHeight: '40px' }}
+                            >
+                              מחק
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Available Space Section */}
-                      <div className="pt-2 border-t border-zinc-800/60">
-                        <div className="flex items-center justify-between text-xs mb-1">
+                      <div className="pt-3 border-t border-zinc-800/60 flex flex-col gap-2">
+                        <div className="flex items-center justify-between text-xs">
                           <span className="text-[11px] text-zinc-400 font-bold">שטח פנוי בדפדפן:</span>
                           <span className="font-bold text-[#ffcc00] font-mono">
                             {storageEstimate 
@@ -2793,7 +2856,7 @@ export default function App() {
                             />
                           </div>
                         )}
-                        <p className="text-[9px] text-zinc-500 mt-1.5 leading-tight">
+                        <p className="text-[10px] text-zinc-500 leading-normal">
                           ההקלטות נשמרות באופן מאובטח בתוך הזיכרון המקומי של הדפדפן (IndexedDB) ואינן נשלחות לשרת חיצוני לצורך שמירה.
                         </p>
                       </div>
@@ -2827,8 +2890,20 @@ export default function App() {
             }`}
           >
             <FileText className={`transition-colors w-3.5 h-3.5 ${mainTab === 'text' ? 'text-[#ffcc00]' : 'text-zinc-400'}`} />
-            <span className="tracking-wide font-black hidden sm:inline">עבודה עם הטקסט</span>
-            <span className="tracking-wide font-black sm:hidden">טקסט</span>
+            <span className="tracking-wide font-black hidden sm:inline">עריכת תסריט</span>
+            <span className="tracking-wide font-black sm:hidden">תסריט</span>
+          </button>
+          <button
+            onClick={() => setMainTab('recording')}
+            className={`flex-1 font-bold flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer rounded-lg px-3 text-xs min-h-[44px] ${
+              mainTab === 'recording'
+                ? 'bg-rose-500/10 text-rose-400'
+                : 'text-zinc-400 hover:text-rose-400 hover:bg-rose-500/5'
+            }`}
+          >
+            <Mic className={`transition-colors w-3.5 h-3.5 ${mainTab === 'recording' ? 'text-rose-400' : 'text-zinc-400'}`} />
+            <span className="tracking-wide font-black hidden sm:inline">מצב הקלטה</span>
+            <span className="tracking-wide font-black sm:hidden">הקלטה</span>
           </button>
           <button
             onClick={() => setMainTab('tracks')}
@@ -2840,7 +2915,7 @@ export default function App() {
           >
             <FileAudio className={`transition-colors w-3.5 h-3.5 ${mainTab === 'tracks' ? 'text-emerald-400' : 'text-zinc-400'}`} />
             <span className="tracking-wide font-black hidden sm:inline">עריכת קול</span>
-            <span className="tracking-wide font-black sm:hidden">שמע</span>
+            <span className="tracking-wide font-black sm:hidden">עריכה</span>
           </button>
         </div>
       </header>
@@ -2860,7 +2935,7 @@ export default function App() {
                   זוהתה הקלטה בלתי-גמורה מההפעלה הקודמת!
                 </h4>
                 <p className="text-xs text-amber-400/80 leading-relaxed mt-0.5">
-                  מערכת ההגנה של הסטודיו שמרה אוטומטית {pendingSessions.reduce((acc, s) => acc + s.chunks.length, 0)} מקטעי קול בזמן אמת. האם תרצה לשחזר אותה?
+                  מערכת ההגנה של הסטודיו שמרה אוטומטית {pendingSessions.reduce((acc, s) => acc + (s.chunkCount || 0), 0)} מקטעי קול בזמן אמת. האם תרצה לשחזר אותה?
                 </p>
               </div>
             </div>
@@ -2920,41 +2995,10 @@ export default function App() {
                     תסריט ונקודות לדיון
                   </h2>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setTeleprompterMode(!teleprompterMode);
-                      if (!teleprompterMode) {
-                        setActiveCardIndex(0); // Reset to first card when entering Reading Mode
-                      }
-                    }}
-                    className={`text-xs sm:text-sm px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                      teleprompterMode
-                        ? 'bg-[#ffcc00] text-zinc-950 shadow-sm'
-                        : 'bg-[#373743] hover:bg-[#434351] text-zinc-300'
-                    }`}
-                  >
-                    {scriptMode === 'cards' ? (
-                      teleprompterMode ? (
-                        <>
-                          <span>מצב עריכה</span>
-                        </>
-                      ) : (
-                        <>
-                          <Book className="w-4 h-4 text-white shrink-0" />
-                          <span>מצב קריאה</span>
-                        </>
-                      )
-                    ) : (
-                      teleprompterMode ? 'מצב עריכה' : 'מצב טלפרומפטר 🚀'
-                    )}
-                  </button>
-                </div>
               </div>
 
-              {!teleprompterMode ? (
-                /* EDIT MODE */
-                <div className="flex flex-col gap-5 flex-1">
+              {/* EDIT MODE */}
+              <div className="flex flex-col gap-5 flex-1">
                   
                   {/* Script Mode & Examples Row */}
                   <div className="flex flex-col gap-4 border-b border-zinc-700/10 pb-4">
@@ -3652,9 +3696,146 @@ export default function App() {
               </div>
 
             </div>
-          ) : (
-            /* TELEPROMPTER / READING MODE */
-            scriptMode === 'cards' ? (
+          </div>
+          )}
+
+          {mainTab === 'recording' && (
+            <div id="recording-panel" className="flex flex-col gap-6 w-full animate-fadeIn">
+              {/* Recording & Upload Section */}
+              <div className={`rounded-2xl p-6 shadow-xl border flex flex-col gap-4.5 transition-colors duration-300 bg-[#2d2d37]/45 border-zinc-700/20`}>
+                <div className="flex flex-col md:flex-row items-center justify-between gap-5 w-full">
+                  {/* Right side: Recording details / prompt */}
+                  <div className="text-right flex-1">
+                    <h3 className="text-base font-black text-zinc-100 flex items-center gap-2 mb-1">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+                      מערכת ההקלטה והעלאת קבצים
+                    </h3>
+                    <p className="text-xs text-zinc-400 leading-relaxed max-w-xl">
+                      כאן תוכלו להקליט את עצמכם קוראים את התסריט או להעלות קבצי שמע קיימים. ההקלטות יישמרו אוטומטית במכשירכם ויתווספו לרצועות לעריכת הקול.
+                    </p>
+                  </div>
+
+                  {/* Left side: Controls */}
+                  <div className="flex flex-wrap items-center gap-3.5 justify-end">
+                    {/* Upload Audio Tracks Block */}
+                    <label className={`flex items-center gap-2 rounded-xl border transition-all font-black cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242] text-zinc-300 hover:text-white px-4 py-2.5 text-xs ${
+                      isUploading ? 'opacity-60 cursor-not-allowed' : ''
+                    }`}>
+                      {isUploading ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
+                      ) : (
+                        <Upload className="w-4 h-4 text-zinc-300" />
+                      )}
+                      <span>{isUploading ? 'מפענח...' : 'העלאת קבצי קול'}</span>
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        multiple
+                        disabled={isUploading}
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {/* Direct browser recording container */}
+                    <div className={`rounded-xl border flex items-center gap-2.5 p-1 px-2 transition-all duration-300 ${
+                      isRecording 
+                        ? 'bg-red-950/25 border-red-800/55 shadow-lg shadow-red-500/5' 
+                        : 'bg-[#2a2a37]/80 border-zinc-700/40'
+                    }`}>
+                      {isRecording ? (
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                            <span className="text-xs font-bold text-red-400 bg-red-950/40 px-2 py-0.5 rounded animate-pulse font-mono">
+                              {formatTime(recordingSeconds)}
+                            </span>
+                          </div>
+                          <canvas
+                            ref={micCanvasRef}
+                            className="w-20 sm:w-28 h-6 bg-[#1c1c22]/90 rounded overflow-hidden border border-zinc-700/20"
+                            width={120}
+                            height={24}
+                          />
+                          <button
+                            onClick={stopRecording}
+                            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer text-xs"
+                          >
+                            <Square className="w-2.5 h-2.5 fill-white text-white" />
+                            <span>עצור</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-3 p-1">
+                          <button
+                            onClick={startRecording}
+                            className="bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer shadow-md shadow-red-600/10"
+                          >
+                            <Mic className="w-3 h-3 text-white animate-pulse" />
+                            <span>הקלטה חדשה</span>
+                          </button>
+
+                          <div className="hidden sm:flex flex-col text-right justify-center border-r border-zinc-800/60 pr-2.5 mr-0.5 leading-none">
+                            <span className="text-[9px] font-bold opacity-80 text-zinc-300">שמירה אוטומטית</span>
+                            <span className="text-[7px] text-zinc-400 leading-none">בזמן הקלטה</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status Indicator Footer */}
+                <div className="border-t border-zinc-700/15 pt-3.5 mt-1 flex flex-col md:flex-row items-center justify-between gap-3 text-right text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-zinc-400 font-bold">מצב הקלטות בפרויקט:</span>
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-black">
+                      {tracks.filter(t => !t.isEffect && !t.isSilence).length} קבצים הוקלטו / הועלו
+                    </span>
+                  </div>
+
+                  {(() => {
+                    const userTracks = tracks.filter(t => !t.isEffect && !t.isSilence);
+                    const lastTrack = userTracks.length > 0 ? userTracks[userTracks.length - 1] : null;
+                    if (!lastTrack) {
+                      return (
+                        <span className="text-zinc-500 italic">טרם הוקלטו או הועלו קבצים בפרויקט זה</span>
+                      );
+                    }
+                    return (
+                      <div className="flex items-center gap-2 font-medium">
+                        <span className="text-zinc-400">שם הקובץ האחרון שהוקלט:</span>
+                        <span className="px-2.5 py-1 rounded bg-[#1f1f2a] text-amber-400 border border-zinc-700/50 font-black max-w-[200px] sm:max-w-[300px] truncate" title={lastTrack.name}>
+                          {lastTrack.name}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          ({(lastTrack.duration || 0).toFixed(1)} שניות)
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Reading View Section */}
+              <div id="reading-panel" className="flex flex-col gap-5 rounded-2xl p-6 transition-colors duration-300 w-full bg-[#2d2d37]/45 shadow-xl border border-zinc-700/20">
+                <div className="flex items-center justify-between pb-3 border-b border-zinc-700/10">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-rose-400" />
+                    <h2 className="text-base font-bold uppercase tracking-wider text-zinc-300">
+                      תצוגת קריאה וטלפרומפטר
+                    </h2>
+                  </div>
+                  <span className="text-xs text-zinc-400 bg-zinc-800/50 px-2.5 py-1 rounded-lg">
+                    סגנון: {scriptMode === 'cards' ? 'כרטיסיות דיון 🎴' : 'טקסט חופשי 📝'}
+                  </span>
+                </div>
+
+                {scriptMode === 'cards' ? (
               /* CARD-BY-CARD READING MODE */
               <div className="flex flex-col gap-6 flex-1">
                 
@@ -3778,67 +3959,110 @@ export default function App() {
               <div className="flex flex-col gap-5 flex-1">
                 
                 {/* Teleprompter controls */}
-                <div className={`p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 text-sm ${
+                <div className={`p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4 text-sm ${
                   isDarkMode ? 'bg-[#1c1c22]' : 'bg-zinc-100'
                 }`}>
-                  
-                  {/* Font Size control */}
-                  <div className="flex items-center gap-2">
-                    <span className={isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}>גופן:</span>
-                    <button
-                      onClick={() => setFontSize(Math.max(14, fontSize - 2))}
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold ${
-                        isDarkMode ? 'bg-[#2d2d37] hover:bg-[#373743] text-zinc-200' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800'
-                      }`}
-                    >
-                      A-
-                    </button>
-                    <span className="font-bold w-6 text-center">{fontSize}</span>
-                    <button
-                      onClick={() => setFontSize(Math.min(32, fontSize + 2))}
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold ${
-                        isDarkMode ? 'bg-[#2d2d37] hover:bg-[#373743] text-zinc-200' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800'
-                      }`}
-                    >
-                      A+
-                    </button>
-                  </div>
-
-                  {/* Speech Rate Segment selector */}
-                  <div className="flex items-center gap-1.5">
-                    <span className={isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}>קצב דיבור:</span>
-                    <div className={`flex rounded-lg p-0.5 ${isDarkMode ? 'bg-[#121216]' : 'bg-zinc-200'}`}>
-                      {(['slow', 'normal', 'fast'] as const).map((rate) => {
-                        const label = rate === 'slow' ? 'איטי' : rate === 'normal' ? 'רגיל' : 'מהיר';
-                        const isActive = speechRate === rate;
-                        return (
-                          <button
-                            key={rate}
-                            onClick={() => setSpeechRate(rate)}
-                            className={`px-3 py-1 rounded-md transition-all font-bold text-xs ${
-                              isActive
-                                ? (isDarkMode ? 'bg-[#373743] text-white shadow' : 'bg-white text-zinc-900 shadow')
-                                : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Auto Scroll Toggle */}
+                  {/* Mobile-only Advanced Settings Toggle Trigger */}
                   <button
-                    onClick={() => setIsScrolling(!isScrolling)}
-                    className={`px-5 py-2 rounded-xl font-bold transition-all ${
-                      isScrolling
-                        ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-                        : (isDarkMode ? 'bg-zinc-200 text-zinc-950 hover:bg-white' : 'bg-zinc-800 text-white hover:bg-zinc-900')
+                    type="button"
+                    onClick={() => setIsTeleprompterSettingsExpanded(!isTeleprompterSettingsExpanded)}
+                    className={`flex md:hidden items-center justify-between w-full py-2 px-3.5 rounded-xl font-bold transition-all border text-xs cursor-pointer ${
+                      isDarkMode 
+                        ? 'bg-[#25252f]/90 hover:bg-[#2d2d39] text-zinc-300 border-zinc-700/50' 
+                        : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800 border-zinc-300/60'
                     }`}
                   >
-                    {isScrolling ? 'עצור גלילה' : 'הפעל גלילה'}
+                    <span className="flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                      הגדרות טלפרומפטר מתקדמות
+                    </span>
+                    <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isTeleprompterSettingsExpanded ? 'rotate-180' : ''}`} />
                   </button>
+
+                  {/* Settings section: always visible on desktop, expands on click on mobile */}
+                  <div className={`flex-col md:flex-row items-start md:items-center gap-5 w-full md:w-auto ${
+                    isTeleprompterSettingsExpanded ? 'flex' : 'hidden md:flex'
+                  } border-b md:border-b-0 pb-3 md:pb-0 border-zinc-700/10`}>
+                    
+                    {/* Font Size control */}
+                    <div className="flex items-center gap-3 justify-between w-full md:w-auto">
+                      <span className={`${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'} font-bold text-xs`}>גופן:</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setFontSize(Math.max(14, fontSize - 2))}
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold cursor-pointer ${
+                            isDarkMode ? 'bg-[#2d2d37] hover:bg-[#373743] text-zinc-200' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800'
+                          }`}
+                        >
+                          A-
+                        </button>
+                        <span className="font-bold w-6 text-center">{fontSize}</span>
+                        <button
+                          onClick={() => setFontSize(Math.min(32, fontSize + 2))}
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold cursor-pointer ${
+                            isDarkMode ? 'bg-[#2d2d37] hover:bg-[#373743] text-zinc-200' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800'
+                          }`}
+                        >
+                          A+
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Speech Rate Segment selector */}
+                    <div className="flex items-center gap-3 justify-between w-full md:w-auto">
+                      <span className={`${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'} font-bold text-xs`}>קצב דיבור:</span>
+                      <div className={`flex rounded-lg p-0.5 ${isDarkMode ? 'bg-[#121216]' : 'bg-zinc-200'}`}>
+                        {(['slow', 'normal', 'fast'] as const).map((rate) => {
+                          const label = rate === 'slow' ? 'איטי' : rate === 'normal' ? 'רגיל' : 'מהיר';
+                          const isActive = speechRate === rate;
+                          return (
+                            <button
+                              key={rate}
+                              onClick={() => setSpeechRate(rate)}
+                              className={`px-3 py-1 rounded-md transition-all font-bold text-xs cursor-pointer ${
+                                isActive
+                                  ? (isDarkMode ? 'bg-[#373743] text-white shadow' : 'bg-white text-zinc-900 shadow')
+                                  : (isDarkMode ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900')
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Auto Scroll Toggles: Always visible */}
+                  <div className="flex items-center gap-2 justify-end w-full md:w-auto">
+                    <button
+                      onClick={() => {
+                        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+                        setIsScrolling(false);
+                        setActiveWordIndex(0);
+                      }}
+                      className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer text-xs ${
+                        isDarkMode 
+                          ? 'bg-[#2a2a35] hover:bg-[#343442] text-zinc-300 border border-zinc-700/50' 
+                          : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800'
+                      }`}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      התחל מחדש
+                    </button>
+
+                    <button
+                      onClick={() => setIsScrolling(!isScrolling)}
+                      className={`px-5 py-2 rounded-xl font-bold transition-all text-xs cursor-pointer ${
+                        isScrolling
+                          ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                          : (isDarkMode ? 'bg-zinc-200 text-zinc-950 hover:bg-white' : 'bg-zinc-800 text-white hover:bg-zinc-900')
+                      }`}
+                    >
+                      {isScrolling ? 'עצור גלילה' : 'הפעל גלילה'}
+                    </button>
+                  </div>
 
                 </div>
 
@@ -3898,23 +4122,11 @@ export default function App() {
 
                 <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
                   <span>💡 קרא/י לאורך הקו המנחה הירוק</span>
-                  <button
-                    onClick={() => {
-                      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
-                      setIsScrolling(false);
-                      setActiveWordIndex(0);
-                    }}
-                    className="hover:text-slate-300 flex items-center gap-1 text-slate-400 bg-slate-800/40 px-2.5 py-1 rounded"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    התחל מחדש
-                  </button>
                 </div>
 
               </div>
-            )
-          )}
-
+            )}
+            </div>
           </div>
           )}
 
@@ -3992,9 +4204,7 @@ export default function App() {
                       
                       {/* Drag Edge Handle / Visual Indicator */}
                       <div className={`absolute right-0 top-0 bottom-0 w-1.5 rounded-r-xl pointer-events-none ${
-                        track.isEffect 
-                          ? (isDarkMode ? 'bg-purple-500' : 'bg-purple-400')
-                          : (isDarkMode ? 'bg-[#ffcc00]' : 'bg-zinc-400')
+                        getTrackColorClass(track.name, !!track.isEffect)
                       }`} />
 
                       {/* Inline Deletion Confirmation Overlay */}
@@ -4661,25 +4871,6 @@ export default function App() {
 
     </section>
 
-    {/* Project Import / Export and Database backups */}
-    <div className="hidden sm:block lg:col-span-12 mt-6">
-      <ProjectImportExport
-        podcastName={podcastName}
-        participants={participants}
-        pendingSessions={pendingSessions}
-        isRecovering={isRecovering}
-        isExporting={isExporting}
-        isImporting={isImporting}
-        storageEstimate={storageEstimate}
-        recoverSession={recoverSession}
-        discardSession={discardSession}
-        exportProjectToZip={exportProjectToZip}
-        importProjectFromZip={importProjectFromZip}
-        handleClearProject={handleClearProject}
-        isDarkMode={isDarkMode}
-      />
-    </div>
-
   </main>
 
       {/* Footer */}
@@ -4851,8 +5042,12 @@ export default function App() {
               ) : (
                 (() => {
                   const filteredHits = freesoundResults.filter((hit) => {
-                    if (freesoundCategory === 'intro' || freesoundCategory === 'outro') {
-                      return hit.duration !== undefined && hit.duration <= 10;
+                    const d = hit.duration;
+                    if (d === undefined || d === null || typeof d !== 'number' || isNaN(d)) {
+                      return true;
+                    }
+                    if (freesoundCategory === 'intro' || freesoundCategory === 'outro' || freesoundCategory === 'transition') {
+                      return d <= 10;
                     }
                     return true;
                   });
@@ -4862,7 +5057,7 @@ export default function App() {
                       <div className="flex flex-col items-center justify-center py-16 text-center">
                         <AlertCircle className={`w-12 h-12 mb-4 ${isDarkMode ? 'text-zinc-700' : 'text-zinc-300'}`} />
                         <p className={`text-sm font-bold mb-2 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                          לא נמצאו תוצאות מתאימות עד 10 שניות או שהשירות אינו זמין
+                          לא נמצאו תוצאות מתאימות למגבלת הזמן או שהשירות אינו זמין
                         </p>
                         <p className="text-xs text-zinc-500 max-w-sm">
                           נסו ללחוץ על "רענון מגוון" או לבצע חיפוש חופשי אחר.
@@ -4973,169 +5168,326 @@ export default function App() {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className={`relative w-80 max-w-full h-full flex flex-col p-5 border-r shadow-2xl z-50 overflow-y-auto ${
+              className={`relative w-full h-full flex flex-col p-6 sm:p-10 shadow-2xl z-50 overflow-y-auto ${
                 isDarkMode ? 'bg-[#1b1b24] text-zinc-100 border-zinc-800' : 'bg-white text-zinc-850 border-zinc-200'
               }`}
             >
               {/* Header */}
-              <div className="flex items-center justify-between pb-4 border-b border-zinc-700/25 mb-4">
-                <span className="font-bold text-base">אפשרויות נוספות</span>
+              <div className="flex items-center justify-between pb-5 border-b border-zinc-700/25 mb-6">
+                <span className="font-black text-xl sm:text-2xl text-amber-400">הגדרות ואפשרויות פרויקט</span>
                 <button
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-zinc-800/10 dark:bg-zinc-800 hover:opacity-80 cursor-pointer"
+                  className="px-4 py-2.5 rounded-xl text-sm font-bold bg-zinc-800/80 dark:bg-zinc-800 hover:opacity-80 cursor-pointer min-h-[44px] flex items-center justify-center gap-1 border border-zinc-700/50"
                 >
                   ✕ סגור
                 </button>
               </div>
 
-              {/* Upload section inside drawer */}
-              <div className="mb-6 flex flex-col gap-2 text-right">
-                <span className="text-xs font-bold text-zinc-400">העלאת קבצים חיצוניים</span>
-                <label className={`w-full py-3.5 px-4 rounded-xl border border-dashed text-center font-bold flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                  isUploading ? 'opacity-60 cursor-not-allowed' : ''
-                } ${
-                  isDarkMode ? 'bg-[#2a2a37]/80 border-zinc-700 hover:bg-[#323242] text-zinc-200' : 'bg-zinc-50 border-zinc-300 hover:bg-zinc-100 text-zinc-700'
-                }`}>
-                  {isUploading ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                  ) : (
-                    <Upload className="w-4 h-4 text-[#ffcc00]" />
-                  )}
-                  <span>{isUploading ? 'מפענח קבצים...' : 'העלאת קבצים מהמכשיר'}</span>
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    multiple
-                    disabled={isUploading}
-                    onChange={(e) => {
-                      handleFileUpload(e);
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {/* Quality & Storage Settings */}
-              <div className="mb-6 p-3.5 rounded-xl border border-zinc-700/20 bg-zinc-950/20 flex flex-col gap-3 text-right">
-                <div className="flex items-center gap-2 text-amber-400 font-bold text-xs justify-end">
-                  <span>הגדרות אולפן ואחסון</span>
-                  <Settings className="w-4 h-4" />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[11px] text-zinc-400">איכות הקלטה:</span>
-                  <div className="grid grid-cols-2 bg-zinc-950/60 rounded-lg p-1 border border-zinc-850 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setRecordingQualityMode('natural')}
-                      className={`py-1.5 text-[10px] font-black rounded transition-all cursor-pointer ${
-                        recordingQualityMode === 'natural'
-                          ? 'bg-[#ffcc00] text-zinc-950 shadow'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      מצב סטודיו
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRecordingQualityMode('classroom')}
-                      className={`py-1.5 text-[10px] font-black rounded transition-all cursor-pointer ${
-                        recordingQualityMode === 'classroom'
-                          ? 'bg-[#ffcc00] text-zinc-950 shadow'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      מצב כיתה
-                    </button>
+              <div className="flex flex-col gap-8 max-w-2xl mx-auto w-full">
+                {/* Quality & Storage Settings */}
+                <div className="p-5 rounded-2xl border border-zinc-750 bg-zinc-950/35 flex flex-col gap-5 text-right">
+                  <div className="flex items-center gap-2.5 text-amber-400 font-bold text-sm justify-end">
+                    <span className="text-base font-black">איכות שמע ואחסון אולפן</span>
+                    <Settings className="w-5 h-5 text-amber-500" />
                   </div>
-                </div>
 
-                <div className="pt-2 border-t border-zinc-850">
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-[11px] text-zinc-400">שטח פנוי בדפדפן:</span>
-                    <span className="font-bold text-[#ffcc00] font-mono">
-                      {storageEstimate 
-                        ? `${(storageEstimate.quotaMb - storageEstimate.usedMb).toLocaleString()} MB` 
-                        : 'בחישוב...'}
-                    </span>
-                  </div>
-                  {storageEstimate && (
-                    <div className="w-full bg-zinc-900 rounded-full h-1 overflow-hidden border border-zinc-800/40">
-                      <div 
-                        className="bg-amber-500 h-full rounded-full transition-all duration-300" 
-                        style={{ width: `${Math.max(2, 100 - storageEstimate.pct)}%` }}
-                      />
+                  <div className="flex flex-col gap-2.5">
+                    <span className="text-xs font-bold text-zinc-300">איכות הקלטה:</span>
+                    <div className="grid grid-cols-2 bg-zinc-950/60 rounded-xl p-1 border border-zinc-800 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setRecordingQualityMode('natural')}
+                        className={`py-3 text-sm font-black rounded-lg transition-all cursor-pointer ${
+                          recordingQualityMode === 'natural'
+                            ? 'bg-[#ffcc00] text-zinc-950 shadow-md'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
+                        }`}
+                        style={{ minHeight: '48px' }}
+                      >
+                        מצב סטודיו
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRecordingQualityMode('classroom')}
+                        className={`py-3 text-sm font-black rounded-lg transition-all cursor-pointer ${
+                          recordingQualityMode === 'classroom'
+                            ? 'bg-[#ffcc00] text-zinc-950 shadow-md'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
+                        }`}
+                        style={{ minHeight: '48px' }}
+                      >
+                        מצב כיתה
+                      </button>
                     </div>
-                  )}
+
+                    <div className="space-y-3 text-xs bg-zinc-950/30 p-3.5 rounded-xl border border-zinc-850 leading-relaxed text-zinc-400 mt-1">
+                      <div>
+                        <span className="font-bold text-zinc-200 text-xs">🎙️ מצב סטודיו:</span>
+                        <p className="mt-1 text-xs text-zinc-400">איכות שמע מלאה, טבעית ומקסימלית ללא סינון רעשים. מומלץ להקלטה בסביבה שקטה.</p>
+                      </div>
+                      <div>
+                        <span className="font-bold text-zinc-200 text-xs">🏫 מצב כיתה:</span>
+                        <p className="mt-1 text-xs text-zinc-400">סינון רעשים אקטיבי וחכם המותאם במיוחד לכיתה רועשת, לדיבור קרוב ולצמצום רעשי רקע.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-3.5 border-t border-zinc-850 flex flex-col gap-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-xs text-zinc-400 font-bold">שטח פנוי בדפדפן:</span>
+                      <span className="font-bold text-[#ffcc00] font-mono text-sm">
+                        {storageEstimate 
+                          ? `${(storageEstimate.quotaMb - storageEstimate.usedMb).toLocaleString()} MB` 
+                          : 'בחישוב...'}
+                      </span>
+                    </div>
+                    {storageEstimate && (
+                      <div className="w-full bg-zinc-900 rounded-full h-2 overflow-hidden border border-zinc-800/40">
+                        <div 
+                          className="bg-amber-500 h-full rounded-full transition-all duration-300" 
+                          style={{ width: `${Math.max(2, 100 - storageEstimate.pct)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {/* Import/Export / Reset */}
-              <div className="mb-6 flex flex-col gap-2 text-right">
-                <span className="text-xs font-bold text-zinc-400">גיבוי וניהול פרויקט</span>
-                
-                <button
-                  onClick={() => {
-                    exportProjectToZip();
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
-                    isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
-                  }`}
-                  style={{ minHeight: '44px' }}
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>ייצוא לפרויקט ZIP 📦</span>
-                </button>
+                {/* Import/Export / Reset */}
+                <div className="flex flex-col gap-3 text-right">
+                  <span className="text-sm font-bold text-zinc-400">גיבוי וניהול פרויקט (מקומי)</span>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <button
+                      onClick={() => {
+                        exportProjectToZip();
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full py-3.5 px-4 rounded-xl text-sm font-black flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 ${
+                        isDarkMode ? 'bg-[#ffcc00] hover:bg-[#ffe066] text-zinc-950 shadow-md' : 'bg-indigo-600 text-white'
+                      }`}
+                      style={{ minHeight: '52px' }}
+                    >
+                      <Download className="w-5 h-5" />
+                      <span>שמירת פרויקט (ZIP) 📦</span>
+                    </button>
 
-                <label className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer text-center ${
-                  isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
-                }`} style={{ minHeight: '44px' }}>
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>טעינת פרויקט מ-ZIP 📁</span>
-                  <input
-                    type="file"
-                    accept=".zip"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        importProjectFromZip(e.target.files[0]);
-                      }
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className="hidden"
-                  />
-                </label>
+                    <label className={`w-full py-3.5 px-4 rounded-xl text-sm font-black flex items-center justify-center gap-2 cursor-pointer text-center transition-all active:scale-95 border ${
+                      isDarkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border-zinc-700' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'
+                    }`} style={{ minHeight: '52px' }}>
+                      <Upload className="w-5 h-5" />
+                      <span>טעינת פרויקט מ-ZIP 📁</span>
+                      <input
+                        type="file"
+                        accept=".zip"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            importProjectFromZip(e.target.files[0]);
+                          }
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
 
-                <button
-                  onClick={() => {
-                    handleClearProject();
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="w-full py-2 px-3 rounded-lg text-xs font-bold bg-red-600/10 hover:bg-red-600/20 border border-red-500/25 text-red-400 flex items-center justify-center gap-1.5 cursor-pointer"
-                  style={{ minHeight: '44px' }}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>איפוס וניקוי פרויקט ⚠️</span>
-                </button>
-              </div>
-
-              {/* Recovery Banner if exists inside mobile drawer too */}
-              {pendingSessions.length > 0 && (
-                <div className="p-3 bg-amber-950/20 border border-amber-800/40 rounded-xl flex flex-col gap-2 text-right">
-                  <span className="text-[10px] font-bold text-amber-400">נמצאה הקלטה בלתי גמורה!</span>
                   <button
                     onClick={() => {
-                      recoverSession(pendingSessions[0]);
+                      handleClearProject();
                       setIsMobileMenuOpen(false);
                     }}
-                    className="w-full py-1.5 bg-amber-500 text-zinc-950 text-[10px] font-black rounded-lg cursor-pointer"
-                    style={{ minHeight: '44px' }}
+                    className="w-full py-3.5 px-4 rounded-xl text-sm font-black bg-rose-900/20 hover:bg-rose-900/40 border border-rose-800/40 text-rose-300 flex items-center justify-center gap-2 cursor-pointer transition-all mt-2"
+                    style={{ minHeight: '52px' }}
                   >
-                    שחזר שמע
+                    <Trash2 className="w-5 h-5 text-rose-400" />
+                    <span>איפוס וניקוי פרויקט לגמרי ⚠️</span>
                   </button>
                 </div>
-              )}
+
+                {/* Recovery Banner if exists inside mobile drawer too */}
+                {pendingSessions.length > 0 && (
+                  <div className="p-4 bg-amber-950/25 border border-amber-800/40 rounded-2xl flex flex-col gap-3 text-right">
+                    <span className="text-sm font-black text-amber-400 flex items-center gap-1.5 justify-end">
+                      <span>נמצאה הקלטה בלתי גמורה!</span>
+                      <span className="animate-pulse">⚠️</span>
+                    </span>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      הקלטה מהסשן האחרון שלכם לא נסגרה כמו שצריך. תוכלו לשחזר אותה כעת ולהכניס אותה ישירות לעריכה.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          recoverSession(pendingSessions[0]);
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className="flex-1 py-3 bg-amber-500 text-zinc-950 text-sm font-black rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
+                        style={{ minHeight: '48px' }}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        <span>שחזר שמע</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          discardSession(pendingSessions[0].id);
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className="px-4 py-3 border border-zinc-700 hover:bg-zinc-800/80 text-zinc-300 text-sm font-bold rounded-xl cursor-pointer"
+                        style={{ minHeight: '48px' }}
+                      >
+                        מחק
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Naming / Classification Dialog Modal */}
+      <AnimatePresence>
+        {pendingNameTrackId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" style={{ direction: 'rtl' }}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className={`relative w-full max-w-md p-6 rounded-2xl border shadow-2xl text-right overflow-hidden ${
+                isDarkMode ? 'bg-[#1b1b24] border-zinc-800 text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'
+              }`}
+            >
+              {/* Top glow or design element */}
+              <div className="absolute top-0 right-0 left-0 h-[3px] bg-[#ffcc00]" />
+
+              <h3 className="text-lg font-black mb-1 flex items-center gap-2 justify-start">
+                <span className="text-[#ffcc00] text-xl">🎙️</span>
+                <span>איך לקרוא להקלטה?</span>
+              </h3>
+              <p className={`text-xs mb-5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                כדי שיהיה קל לזהות ולערוך, בחרו סיווג מהיר או כתבו שם מותאם אישית:
+              </p>
+
+              {/* Editable Text Input */}
+              <div className="mb-5">
+                <label className="block text-xs font-bold text-zinc-400 mb-2">שם הרצועה:</label>
+                <input
+                  type="text"
+                  value={pendingTrackName}
+                  onChange={(e) => setPendingTrackName(e.target.value)}
+                  className={`w-full py-3 px-4 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[#ffcc00]/50 border transition-all ${
+                    isDarkMode ? 'bg-zinc-900 border-zinc-800 text-white focus:border-zinc-700' : 'bg-zinc-50 border-zinc-300 text-zinc-900 focus:border-zinc-400'
+                  }`}
+                  placeholder="לדוגמה: 01 פתיח"
+                />
+              </div>
+
+              {/* Quick Classify Buttons Grid */}
+              <div className="mb-6">
+                <span className="block text-xs font-bold text-zinc-400 mb-2">סיווג מהיר (מוסיף מספור אוטומטי):</span>
+                <div className="grid grid-cols-3 gap-2">
+                  {(() => {
+                    const match = pendingTrackName.match(/(\d+)/);
+                    const serialPrefix = match ? match[1] : "01";
+                    
+                    const categories = [
+                      { label: "פתיח", value: `${serialPrefix} פתיח` },
+                      { label: "גוף", value: `${serialPrefix} גוף` },
+                      { label: "סיכום", value: `${serialPrefix} סיכום` },
+                      { label: "ראיון", value: `${serialPrefix} ראיון` },
+                      { label: "מחשבה", value: `${serialPrefix} מחשבה` },
+                    ];
+
+                    return (
+                      <>
+                        {categories.map((cat) => {
+                          const isActive = pendingTrackName === cat.value;
+                          let btnClass = '';
+                          
+                          if (cat.label === 'פתיח') {
+                            btnClass = isActive
+                              ? 'bg-indigo-600 border-transparent text-white shadow-md shadow-indigo-600/25 font-black'
+                              : isDarkMode
+                                ? 'bg-indigo-950/25 border-indigo-800/40 text-indigo-300 hover:bg-indigo-950/45'
+                                : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100';
+                          } else if (cat.label === 'גוף') {
+                            btnClass = isActive
+                              ? 'bg-emerald-600 border-transparent text-white shadow-md shadow-emerald-600/25 font-black'
+                              : isDarkMode
+                                ? 'bg-emerald-950/25 border-emerald-800/40 text-emerald-300 hover:bg-emerald-950/45'
+                                : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100';
+                          } else if (cat.label === 'סיכום') {
+                            btnClass = isActive
+                              ? 'bg-amber-500 border-transparent text-zinc-950 shadow-md shadow-amber-500/25 font-black'
+                              : isDarkMode
+                                ? 'bg-amber-950/25 border-amber-800/40 text-amber-300 hover:bg-amber-950/45'
+                                : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100';
+                          } else {
+                            btnClass = isActive
+                              ? 'bg-[#ffcc00] border-transparent text-zinc-950 shadow-md shadow-yellow-600/25 font-black'
+                              : isDarkMode
+                                ? 'bg-zinc-800/50 border-zinc-800/80 hover:bg-zinc-800 text-zinc-300'
+                                : 'bg-zinc-100 border-zinc-200 hover:bg-zinc-200 text-zinc-700';
+                          }
+
+                          return (
+                            <button
+                              key={cat.label}
+                              type="button"
+                              onClick={() => setPendingTrackName(cat.value)}
+                              className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all border cursor-pointer flex items-center justify-center min-h-[44px] ${btnClass}`}
+                            >
+                              {cat.label}
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaultName = `טייק ${serialPrefix}`;
+                            setPendingTrackName(defaultName);
+                          }}
+                          className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all border cursor-pointer flex items-center justify-center min-h-[44px] ${
+                            pendingTrackName.startsWith('טייק')
+                              ? 'bg-zinc-700 border-transparent text-zinc-100 font-black'
+                              : isDarkMode
+                                ? 'bg-zinc-800/50 border-zinc-800/80 hover:bg-zinc-800 text-zinc-300'
+                                : 'bg-zinc-100 border-zinc-200 hover:bg-zinc-200 text-zinc-700'
+                          }`}
+                        >
+                          אחר
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pendingNameTrackId) {
+                      updateTrackField(pendingNameTrackId, 'name', pendingTrackName);
+                    }
+                    setPendingNameTrackId(null);
+                  }}
+                  className="flex-1 py-3 px-4 rounded-xl text-sm font-black bg-[#ffcc00] hover:bg-[#ffdd33] text-zinc-950 shadow-lg cursor-pointer text-center min-h-[44px]"
+                >
+                  שמור שם 💾
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingNameTrackId(null);
+                  }}
+                  className={`py-3 px-4 rounded-xl text-sm font-bold cursor-pointer text-center min-h-[44px] ${
+                    isDarkMode ? 'bg-zinc-800 hover:bg-zinc-755 text-zinc-300' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600'
+                  }`}
+                >
+                  השאר כך
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

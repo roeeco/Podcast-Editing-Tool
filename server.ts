@@ -62,10 +62,8 @@ async function startServer() {
 
       // Build filter on server-side (do not allow arbitrary strings from client)
       let filterStr = "";
-      if (categoryStr === "intro" || categoryStr === "outro") {
+      if (categoryStr === "intro" || categoryStr === "outro" || categoryStr === "transition") {
         filterStr = "duration:[0 TO 10]";
-      } else if (categoryStr === "transition") {
-        filterStr = "duration:[0 TO 15]";
       }
 
       // Sort allowlist: score, rating_desc, downloads_desc, created_desc, duration_asc

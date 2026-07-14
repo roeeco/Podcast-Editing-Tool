@@ -1,40 +1,35 @@
 export const INTRO_QUERIES = [
-  "podcast intro sting",
-  "short intro jingle",
-  "radio intro bumper",
-  "opening logo sound",
-  "soft podcast intro",
-  "news intro sting",
-  "educational podcast intro",
-  "short music ident",
-  "warm acoustic intro",
-  "bright opening chime"
+  "intro",
+  "podcast intro",
+  "jingle intro",
+  "acoustic intro",
+  "chime intro",
+  "music intro",
+  "logo intro",
+  "sting intro",
+  "bright intro",
+  "soft intro"
 ];
 
 export const OUTRO_QUERIES = [
-  "podcast outro sting",
-  "closing jingle",
-  "soft ending music",
-  "radio outro bumper",
-  "ending logo sound",
-  "short outro chime",
-  "warm closing music",
-  "success ending sting",
-  "gentle outro",
-  "calm podcast ending"
+  "outro",
+  "podcast outro",
+  "jingle outro",
+  "closing music",
+  "ending music",
+  "chime outro",
+  "calm outro",
+  "soft outro"
 ];
 
 export const TRANSITION_QUERIES = [
-  "podcast transition",
-  "short whoosh",
-  "soft transition",
-  "radio transition",
-  "button click transition",
-  "page turn sound",
-  "short sweep",
-  "light riser",
-  "pop transition",
-  "marker sound"
+  "transition",
+  "whoosh",
+  "sfx transition",
+  "sweep transition",
+  "riser transition",
+  "sound transition",
+  "radio transition"
 ];
 
 export function getRandomQuery(category: 'intro' | 'transition' | 'outro'): string {
@@ -55,3 +50,4 @@ export const ALLOWED_SORTS = [
   { value: "created_desc", label: "חדש ביותר" },
   { value: "duration_asc", label: "קצר ביותר" }
 ];
+

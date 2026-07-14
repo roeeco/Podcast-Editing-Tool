@@ -593,7 +593,7 @@ export const TrackList: React.FC<TrackListProps> = ({
                 <h4 className="text-sm font-bold">אפשרויות שמע ומעברים מתקדמים</h4>
                 {!isAdvancedOptionsExpanded && (
                   <div className={`text-[10px] mt-0.5 font-bold ${isDarkMode ? 'text-zinc-500' : 'text-zinc-600'}`}>
-                    פורמט: {exportFormat.toUpperCase()} | {useCrossfade ? 'מצב מעבר רך פעיל' : 'ללא מעבר רך'} | {useNormalization ? 'נרמול פעיל' : 'ללא נרמול'} | {useDucking ? 'הנמכת מוזיקה פעילה' : 'ללא הנמכה'}
+                    פורמט: {exportFormat.toUpperCase()} | {useCrossfade ? 'מצב מעבר רך פעיל' : 'ללא מעבר רך'} | {useNormalization ? 'הגנה מצרימה פעילה' : 'ללא הגנה מצרימה'} | {useDucking ? 'הנמכת מוזיקה פעילה' : 'ללא הנמכה'}
                   </div>
                 )}
               </div>
@@ -674,8 +674,8 @@ export const TrackList: React.FC<TrackListProps> = ({
                         className="w-4 h-4 mt-0.5 accent-indigo-500 cursor-pointer"
                       />
                       <div className="text-right">
-                        <div className="text-xs font-bold font-sans">נרמול עוצמת קול (Loudness)</div>
-                        <div className="text-[10px] mt-0.5 leading-normal text-zinc-500 font-sans font-sans">עוצמת שמע אחידה ומניעת צרימות</div>
+                        <div className="text-xs font-bold font-sans">הגנה מצרימה (Clip protection)</div>
+                        <div className="text-[10px] mt-0.5 leading-normal text-zinc-500 font-sans">מנמיך רק אם המיקס חזק מדי ומונע עיוותים</div>
                       </div>
                     </label>
 
