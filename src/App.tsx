@@ -981,6 +981,11 @@ export default function App() {
       if (previewAudioRef.current) {
         cleanupAudioElement(previewAudioRef.current);
       }
+      // Close the general shared AudioContext on unmount
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
       // Clean up object URLs to avoid memory leaks
       latestTracksRef.current.forEach((t) => {
         if (t.audioUrl) URL.revokeObjectURL(t.audioUrl);
@@ -1503,8 +1508,6 @@ export default function App() {
 
   // 9. Previewing specific trimmed audio segment
   const playIndividualTrackSegment = (track: PodcastTrack) => {
-    getAudioContext(); // user activation
-
     if (track.isSilence) {
       if (playingTrackId === track.id) {
         stopIndividualTrack();
@@ -1572,8 +1575,6 @@ export default function App() {
   };
 
   const playIndividualFullTrack = (track: PodcastTrack) => {
-    getAudioContext(); // user activation
-
     if (playingFullTrackId === track.id) {
       stopIndividualFullTrack();
       return;
@@ -1867,10 +1868,10 @@ export default function App() {
     if (isMergedPlayerPlaying) {
       if (mergedAudioRef.current) {
         cleanupAudioElement(mergedAudioRef.current);
+        mergedAudioRef.current = null;
       }
       setIsMergedPlayerPlaying(false);
     } else {
-      getAudioContext(); // resume
       if (mergedAudioRef.current) {
         mergedAudioRef.current.play()
           .then(() => {
