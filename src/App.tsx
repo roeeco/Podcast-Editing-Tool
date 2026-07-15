@@ -296,6 +296,11 @@ export default function App() {
   const [freesoundSort, setFreesoundSort] = useState<string>("score");
   const [previewPlayingId, setPreviewPlayingId] = useState<string | null>(null);
   const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    previewAudioRef.current = previewAudio;
+  }, [previewAudio]);
 
   const fetchFreesoundAssets = async (category: 'intro' | 'transition' | 'outro', customQuery?: string, sortVal?: string) => {
     setFreesoundLoading(true);
@@ -351,15 +356,14 @@ export default function App() {
   useEffect(() => {
     if (!isFreesoundModalOpen) {
       if (previewAudio) {
-        previewAudio.pause();
-        previewAudio.src = '';
+        cleanupAudioElement(previewAudio);
         setPreviewAudio(null);
       }
       setPreviewPlayingId(null);
       setFreesoundSearchQuery("");
       setFreesoundSort("score");
     }
-  }, [isFreesoundModalOpen]);
+  }, [isFreesoundModalOpen, previewAudio]);
 
   const handleFreesoundMoreVariety = () => {
     const nextQuery = getRandomQuery(freesoundCategory);
@@ -372,11 +376,11 @@ export default function App() {
 
   const togglePreviewAudio = (hitId: string, audioUrl: string) => {
     if (previewPlayingId === hitId && previewAudio) {
-      previewAudio.pause();
+      cleanupAudioElement(previewAudio);
       setPreviewPlayingId(null);
     } else {
       if (previewAudio) {
-        previewAudio.pause();
+        cleanupAudioElement(previewAudio);
       }
       const audio = new Audio(audioUrl);
       audio.play().catch(e => console.error("Error playing preview:", e));
@@ -405,8 +409,7 @@ export default function App() {
 
   const handleAddFreesoundTrack = async (hit: any) => {
     if (previewAudio) {
-      previewAudio.pause();
-      previewAudio.src = '';
+      cleanupAudioElement(previewAudio);
       setPreviewAudio(null);
     }
     setPreviewPlayingId(null);
@@ -485,6 +488,40 @@ export default function App() {
   const animationFrameRef = useRef<number | null>(null);
   const micCanvasRef = useRef<HTMLCanvasElement>(null);
 
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const releaseLiveRecordingResources = async () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    try {
+      micSourceRef.current?.disconnect();
+    } catch {}
+
+    try {
+      micAnalyserRef.current?.disconnect();
+    } catch {}
+
+    micSourceRef.current = null;
+    micAnalyserRef.current = null;
+
+    if (recordingStreamRef.current) {
+      recordingStreamRef.current.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+    }
+
+    if (micAudioCtxRef.current && micAudioCtxRef.current.state !== 'closed') {
+      try {
+        await micAudioCtxRef.current.close();
+      } catch {}
+    }
+
+    micAudioCtxRef.current = null;
+  };
+
   // Audio Playback State for Individual Tracks
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const [playingFullTrackId, setPlayingFullTrackId] = useState<string | null>(null);
@@ -500,6 +537,17 @@ export default function App() {
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const mergedAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const cleanupAudioElement = (audio?: HTMLAudioElement | null) => {
+    if (!audio) return;
+    try {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    } catch (e) {
+      console.warn("Error cleaning up audio element:", e);
+    }
+  };
 
   const [useCrossfade, setUseCrossfade] = useState<boolean>(true);
   const [useNormalization, setUseNormalization] = useState<boolean>(true);
@@ -920,8 +968,18 @@ export default function App() {
   // Clean up canvas animations and audio elements on unmount
   useEffect(() => {
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
+      releaseLiveRecordingResources();
+      // Clean up playing audio elements
+      Object.values(audioElementsRef.current).forEach((audio) => {
+        cleanupAudioElement(audio);
+      });
+      audioElementsRef.current = {};
+      if (mergedAudioRef.current) {
+        cleanupAudioElement(mergedAudioRef.current);
+        mergedAudioRef.current = null;
+      }
+      if (previewAudioRef.current) {
+        cleanupAudioElement(previewAudioRef.current);
       }
       // Clean up object URLs to avoid memory leaks
       latestTracksRef.current.forEach((t) => {
@@ -1062,9 +1120,14 @@ export default function App() {
       }
       recordingStreamRef.current = stream;
 
-      const audioCtx = getAudioContext();
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      const micAudioCtx = new AudioCtxClass();
+      micAudioCtxRef.current = micAudioCtx;
+
+      const source = micAudioCtx.createMediaStreamSource(stream);
+      micSourceRef.current = source;
+
+      const analyser = micAudioCtx.createAnalyser();
       analyser.fftSize = 64; // smaller size for snappy level bar
       source.connect(analyser);
       micAnalyserRef.current = analyser;
@@ -1144,6 +1207,8 @@ export default function App() {
       };
 
       mediaRecorder.onstop = async () => {
+        await releaseLiveRecordingResources();
+
         // Clear interval safely
         if (recordingIntervalRef.current) {
           clearInterval(recordingIntervalRef.current);
@@ -1215,11 +1280,6 @@ export default function App() {
           setErrorMsg('שגיאה בפענוח או שמירת נתוני השמע שהוקלטו.');
         }
 
-        // Clean up recording stream
-        if (recordingStreamRef.current) {
-          recordingStreamRef.current.getTracks().forEach((track) => track.stop());
-          recordingStreamRef.current = null;
-        }
         recordingSessionIdRef.current = null;
       };
 
@@ -1557,7 +1617,7 @@ export default function App() {
   const stopIndividualFullTrack = () => {
     if (playingFullTrackId) {
       if (audioElementsRef.current[playingFullTrackId + '_full']) {
-        audioElementsRef.current[playingFullTrackId + '_full'].pause();
+        cleanupAudioElement(audioElementsRef.current[playingFullTrackId + '_full']);
         delete audioElementsRef.current[playingFullTrackId + '_full'];
       }
       const silFullId = `silenceFullTimeout_${playingFullTrackId}`;
@@ -1572,7 +1632,7 @@ export default function App() {
   const stopIndividualTrack = () => {
     if (playingTrackId) {
       if (audioElementsRef.current[playingTrackId]) {
-        audioElementsRef.current[playingTrackId].pause();
+        cleanupAudioElement(audioElementsRef.current[playingTrackId]);
         delete audioElementsRef.current[playingTrackId];
       }
       const silId = `silenceTimeout_${playingTrackId}`;
@@ -1655,7 +1715,7 @@ export default function App() {
     // Stop any playing previews
     stopIndividualTrack();
     if (isMergedPlayerPlaying && mergedAudioRef.current) {
-      mergedAudioRef.current.pause();
+      cleanupAudioElement(mergedAudioRef.current);
       setIsMergedPlayerPlaying(false);
     }
 
@@ -1796,7 +1856,7 @@ export default function App() {
 
     if (!mergedAudioRef.current || mergedAudioRef.current.src !== mergedUrl) {
       if (mergedAudioRef.current) {
-        mergedAudioRef.current.pause();
+        cleanupAudioElement(mergedAudioRef.current);
       }
       mergedAudioRef.current = new Audio(mergedUrl);
       mergedAudioRef.current.onended = () => {
@@ -1805,18 +1865,22 @@ export default function App() {
     }
 
     if (isMergedPlayerPlaying) {
-      mergedAudioRef.current.pause();
+      if (mergedAudioRef.current) {
+        cleanupAudioElement(mergedAudioRef.current);
+      }
       setIsMergedPlayerPlaying(false);
     } else {
       getAudioContext(); // resume
-      mergedAudioRef.current.play()
-        .then(() => {
-          setIsMergedPlayerPlaying(true);
-        })
-        .catch((err) => {
-          console.error(err);
-          setErrorMsg('שגיאה בניסיון להשמיע את ההסכת הממוזג.');
-        });
+      if (mergedAudioRef.current) {
+        mergedAudioRef.current.play()
+          .then(() => {
+            setIsMergedPlayerPlaying(true);
+          })
+          .catch((err) => {
+            console.error(err);
+            setErrorMsg('שגיאה בניסיון להשמיע את ההסכת הממוזג.');
+          });
+      }
     }
   };
 
@@ -2264,7 +2328,7 @@ export default function App() {
           }
           setIsMergedPlayerPlaying(false);
           if (mergedAudioRef.current) {
-            mergedAudioRef.current.pause();
+            cleanupAudioElement(mergedAudioRef.current);
             mergedAudioRef.current = null;
           }
 
@@ -2468,7 +2532,7 @@ export default function App() {
       setMergedDuration(0);
       setIsMergedPlayerPlaying(false);
       if (mergedAudioRef.current) {
-        mergedAudioRef.current.pause();
+        cleanupAudioElement(mergedAudioRef.current);
         mergedAudioRef.current = null;
       }
 
