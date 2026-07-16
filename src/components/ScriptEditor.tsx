@@ -516,6 +516,42 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
         /* EDIT MODE */
         <div className="flex flex-col gap-5 flex-1">
           
+          {/* Podcast Info Inputs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4 border-b border-zinc-700/10">
+            <div className="flex flex-col gap-1.5">
+              <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                שם ההסכת (פודקאסט):
+              </label>
+              <input
+                type="text"
+                value={podcastName}
+                onChange={(e) => setPodcastName(e.target.value)}
+                placeholder="למשל: היסטוריה של המדע..."
+                className={`rounded-xl p-2.5 text-sm font-bold border font-sans ${
+                  isDarkMode 
+                    ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700/60 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-700' 
+                    : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'
+                }`}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                שמות המשתתפים בשיחה:
+              </label>
+              <input
+                type="text"
+                value={participants}
+                onChange={(e) => setParticipants(e.target.value)}
+                placeholder="למשל: דניאל ומיכל..."
+                className={`rounded-xl p-2.5 text-sm font-bold border font-sans ${
+                  isDarkMode 
+                    ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700/60 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-700' 
+                    : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'
+                }`}
+              />
+            </div>
+          </div>
+
           {/* Script Mode & Examples Row */}
           <div className="flex flex-col gap-4 border-b border-zinc-700/10 pb-4">
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
@@ -580,6 +616,12 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                                 type: c.type as 'intro' | 'body' | 'outro',
                                 text: c.text
                               })));
+                            }
+                            if (tmpl.podcastName) {
+                              setPodcastName(tmpl.podcastName);
+                            }
+                            if (tmpl.participants) {
+                              setParticipants(tmpl.participants);
                             }
                             setShowExamples(false);
                           }}

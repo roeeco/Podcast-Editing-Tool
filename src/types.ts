@@ -53,6 +53,8 @@ export interface ScriptSuggestion {
   title: string;
   content: string;
   cards: { type: 'intro' | 'body' | 'outro'; text: string }[];
+  podcastName?: string;
+  participants?: string;
 }
 
 export interface ScriptCard {
