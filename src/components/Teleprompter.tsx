@@ -183,6 +183,8 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
   const [isScrolling, setIsScrolling] = useState<boolean>(false);
   const [activeWordIndex, setActiveWordIndex] = useState<number>(0);
   const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
+  const [guideLineTop, setGuideLineTop] = useState<number>(0);
+  const [guideLineHeight, setGuideLineHeight] = useState<number>(0);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -253,7 +255,7 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
   // Automatically scroll the container to keep the active word in the upper third of the box
   useEffect(() => {
     if (teleprompterMode && isScrolling) {
-      const activeWordElem = document.getElementById(`word-${activeWordIndex}`);
+      const activeWordElem = document.getElementById(`tele-word-${activeWordIndex}`);
       if (activeWordElem && scrollContainerRef.current) {
         const container = scrollContainerRef.current;
         const rect = activeWordElem.getBoundingClientRect();
@@ -267,6 +269,27 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
       }
     }
   }, [activeWordIndex, teleprompterMode, isScrolling]);
+
+  // Update guide line position to match the active word's line
+  useEffect(() => {
+    if (teleprompterMode) {
+      const updatePosition = () => {
+        const activeWordElem = document.getElementById(`tele-word-${activeWordIndex}`);
+        if (activeWordElem && scrollContainerRef.current) {
+          const offsetTop = activeWordElem.offsetTop;
+          const offsetHeight = activeWordElem.offsetHeight;
+          setGuideLineTop(offsetTop - 2);
+          setGuideLineHeight(offsetHeight + 4);
+        } else {
+          setGuideLineHeight(0);
+        }
+      };
+
+      updatePosition();
+      const handle = requestAnimationFrame(updatePosition);
+      return () => cancelAnimationFrame(handle);
+    }
+  }, [activeWordIndex, teleprompterMode, fontSize, teleprompterText]);
 
   return (
     <div id="teleprompter-stage" className="flex flex-col gap-5 rounded-2xl p-6 transition-colors duration-300 w-full bg-[#2d2d37]/45 shadow-xl border border-zinc-700/20">
@@ -474,9 +497,17 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
             style={{ fontSize: `${fontSize}px` }}
           >
             {/* Visual reading line marker */}
-            <div className={`absolute left-0 right-0 top-1/3 h-12 pointer-events-none ${
-              isDarkMode ? 'bg-[#ffcc00]/5' : 'bg-zinc-200/20'
-            }`} />
+            {guideLineHeight > 0 && (
+              <div 
+                className={`absolute left-0 right-0 pointer-events-none transition-all duration-200 ${
+                  isDarkMode ? 'bg-emerald-500/10 border-y border-emerald-500/25' : 'bg-emerald-500/5 border-y border-emerald-500/15'
+                }`}
+                style={{
+                  top: `${guideLineTop}px`,
+                  height: `${guideLineHeight}px`
+                }}
+              />
+            )}
             
             <div className="leading-relaxed font-bold select-none pt-2 pb-48 px-2 text-right space-y-4" style={{ direction: 'rtl' }}>
               {parsedWords.length === 0 || (parsedWords.length === 1 && parsedWords[0].isEmpty) ? (
@@ -494,7 +525,7 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
                         return (
                           <span
                             key={wordObj.index}
-                            id={`word-${wordObj.index}`}
+                            id={`tele-word-${wordObj.index}`}
                             onClick={() => setActiveWordIndex(wordObj.index)}
                             className={`transition-all duration-200 rounded px-1.5 py-0.5 inline-block mx-1 cursor-pointer ${
                               isCurrent
@@ -520,7 +551,7 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
           </div>
 
           <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
-            <span>💡 קרא/י לאורך הקו המנחה הצהוב</span>
+            <span>💡 קרא/י לאורך הקו המנחה הירוק</span>
             <button
               onClick={() => {
                 if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;

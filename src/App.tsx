@@ -175,6 +175,8 @@ export default function App() {
   const [speechRate, setSpeechRate] = useState<'slow' | 'normal' | 'fast'>('normal');
   const [activeWordIndex, setActiveWordIndex] = useState<number>(0);
   const [isTeleprompterSettingsExpanded, setIsTeleprompterSettingsExpanded] = useState<boolean>(false);
+  const [guideLineTop, setGuideLineTop] = useState<number>(0);
+  const [guideLineHeight, setGuideLineHeight] = useState<number>(0);
 
   // Drag-and-drop state for track cards
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -913,7 +915,7 @@ export default function App() {
   // Automatically scroll the container to keep the active word in the upper third of the box
   useEffect(() => {
     if (isScrolling && mainTab === 'recording' && scriptMode === 'text') {
-      const activeWordElem = document.getElementById(`word-${activeWordIndex}`);
+      const activeWordElem = document.getElementById(`app-word-${activeWordIndex}`);
       if (activeWordElem && scrollContainerRef.current) {
         const container = scrollContainerRef.current;
         const rect = activeWordElem.getBoundingClientRect();
@@ -927,6 +929,27 @@ export default function App() {
       }
     }
   }, [activeWordIndex, mainTab, scriptMode, isScrolling]);
+
+  // Update guide line position to match the active word's line
+  useEffect(() => {
+    if (mainTab === 'recording' && scriptMode === 'text') {
+      const updatePosition = () => {
+        const activeWordElem = document.getElementById(`app-word-${activeWordIndex}`);
+        if (activeWordElem && scrollContainerRef.current) {
+          const offsetTop = activeWordElem.offsetTop;
+          const offsetHeight = activeWordElem.offsetHeight;
+          setGuideLineTop(offsetTop - 2);
+          setGuideLineHeight(offsetHeight + 4);
+        } else {
+          setGuideLineHeight(0);
+        }
+      };
+
+      updatePosition();
+      const handle = requestAnimationFrame(updatePosition);
+      return () => cancelAnimationFrame(handle);
+    }
+  }, [activeWordIndex, mainTab, scriptMode, fontSize, teleprompterText]);
 
   // Reset scrolling state on tab or mode change to keep things clean
   useEffect(() => {
@@ -4140,9 +4163,17 @@ export default function App() {
                   style={{ fontSize: `${fontSize}px` }}
                 >
                   {/* Visual Reading Target line marker */}
-                  <div className={`absolute left-0 right-0 top-1/3 h-12 pointer-events-none ${
-                    isDarkMode ? 'bg-[#ffcc00]/5' : 'bg-zinc-200/20'
-                  }`} />
+                  {guideLineHeight > 0 && (
+                    <div 
+                      className={`absolute left-0 right-0 pointer-events-none transition-all duration-200 ${
+                        isDarkMode ? 'bg-emerald-500/10 border-y border-emerald-500/25' : 'bg-emerald-500/5 border-y border-emerald-500/15'
+                      }`}
+                      style={{
+                        top: `${guideLineTop}px`,
+                        height: `${guideLineHeight}px`
+                      }}
+                    />
+                  )}
                   
                   <div className="leading-relaxed font-bold select-none pt-2 pb-48 px-2 text-right space-y-4" style={{ direction: 'rtl' }}>
                     {parsedWords.length === 0 || (parsedWords.length === 1 && parsedWords[0].isEmpty) ? (
@@ -4160,7 +4191,7 @@ export default function App() {
                               return (
                                 <span
                                   key={wordObj.index}
-                                  id={`word-${wordObj.index}`}
+                                  id={`app-word-${wordObj.index}`}
                                   onClick={() => setActiveWordIndex(wordObj.index)}
                                   className={`transition-all duration-200 rounded px-1.5 py-0.5 inline-block mx-1 cursor-pointer ${
                                     isCurrent
