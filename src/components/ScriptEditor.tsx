@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   FileText,
@@ -89,13 +89,24 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   const [aiStudentNotes, setAiStudentNotes] = useState<string>("");
   const [aiStructure, setAiStructure] = useState<string>("שיחה בין שני אנשים");
   const [aiOutputFormat, setAiOutputFormat] = useState<string>("כרטיסיות שיחה דינמיות - Talking Points");
-  const [aiDuration, setAiDuration] = useState<string>("3 דקות");
+  const [aiDuration, setAiDuration] = useState<string>("שתי דקות");
   const [aiArchetype, setAiArchetype] = useState<string>("בית מדרש");
   const [aiPromptCopied, setAiPromptCopied] = useState<boolean>(false);
   const [aiPastedOutput, setAiPastedOutput] = useState<string>("");
   const [aiTargetType, setAiTargetType] = useState<'cards' | 'text'>('cards');
   const [draggedCardIndex, setDraggedCardIndex] = useState<number | null>(null);
   const [dragOverCardIndex, setDragOverCardIndex] = useState<number | null>(null);
+
+  // Synchronize AI Assistant Output Presentation Format with the editing style (scriptMode) above the panel
+  useEffect(() => {
+    if (scriptMode === 'text') {
+      setAiOutputFormat("תסריט מלא");
+      setAiTargetType("text");
+    } else if (scriptMode === 'cards') {
+      setAiOutputFormat("כרטיסיות שיחה דינמיות - Talking Points");
+      setAiTargetType("cards");
+    }
+  }, [scriptMode]);
 
   const handleAddCard = (type: 'intro' | 'body' | 'outro') => {
     const newCard: ScriptCard = {
@@ -338,7 +349,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
     if (hasText) {
       contentHTML += `
         <div>
-          <div class="section-title" style="font-size: 18px; font-weight: 700; color: #000000; border-bottom: 2px solid #000000; padding-bottom: 4px; margin-top: 10px; margin-bottom: 15px; display: inline-block;">✍️ תסריט מלא (טקסט חופשי)</div>
+          <div class="section-title" style="font-size: 18px; font-weight: 700; color: #000000; border-bottom: 2px solid #000000; padding-bottom: 4px; margin-top: 10px; margin-bottom: 15px; display: inline-block;">✍️ תסריט מלא</div>
           <div style="background-color: #ffffff; border: 1.5px solid #000000; border-radius: 8px; padding: 20px; margin-bottom: 20px; color: #000000;">
             ${formattedTextHTML}
           </div>
@@ -499,34 +510,6 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             תסריט ונקודות לדיון
           </h2>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setTeleprompterMode(!teleprompterMode);
-              if (!teleprompterMode) {
-                setActiveCardIndex(0); // Reset to first card when entering Reading Mode
-              }
-            }}
-            className={`text-xs sm:text-sm px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-2 ${
-              teleprompterMode
-                ? 'bg-[#ffcc00] text-zinc-950 shadow-sm'
-                : 'bg-[#373743] hover:bg-[#434351] text-zinc-300'
-            }`}
-          >
-            {scriptMode === 'cards' ? (
-              teleprompterMode ? (
-                <span>מצב עריכה</span>
-              ) : (
-                <>
-                  <Book className="w-4 h-4 text-white shrink-0" />
-                  <span>מצב קריאה</span>
-                </>
-              )
-            ) : (
-              teleprompterMode ? 'מצב עריכה' : 'מצב טלפרומפטר 🚀'
-            )}
-          </button>
-        </div>
       </div>
 
       {!teleprompterMode ? (
@@ -547,7 +530,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         : 'text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
-                    טקסט חופשי
+                    תסריט
                   </button>
                   <button
                     onClick={() => setScriptMode('cards')}
@@ -612,202 +595,162 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             </div>
           </div>
 
-          {scriptMode === 'text' ? (
-            <div className="flex-1 flex flex-col min-h-[300px]">
-              <label className="text-sm mb-2 flex items-center justify-between font-bold font-sans">
-                <span className="text-zinc-300">כתוב/י או הדבק/י את התסריט שלך כאן:</span>
-                <button
-                  onClick={() => setScriptContent('')}
-                  className="text-xs font-bold text-red-500 hover:text-red-400 transition-colors flex items-center gap-1 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded-lg cursor-pointer"
-                >
-                  <Trash2 className="w-3 h-3 text-red-500" />
-                  <span>נקה הכל</span>
-                </button>
-              </label>
-              <textarea
-                value={scriptContent}
-                onChange={(e) => setScriptContent(e.target.value)}
-                placeholder="הדבק/י כאן נקודות לדיון, שאלות לראיון, או טקסט מלא להקראה..."
-                className={`w-full flex-1 rounded-xl p-4 text-base focus:outline-none transition-all leading-relaxed resize-none font-sans border ${
-                  isDarkMode 
-                    ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700/60 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-700' 
-                    : 'bg-zinc-100 text-zinc-800 border-zinc-300 focus:border-zinc-400 focus:ring-1 focus:ring-zinc-300'
-                }`}
-              />
-            </div>
-          ) : (
-            <div className="flex flex-col gap-4">
-              {/* AI Assistant Scaffolding Panel */}
-              <div className={`rounded-2xl border p-4.5 mb-2 transition-all duration-300 ${
-                isAiAssistantOpen
-                  ? (isDarkMode ? 'bg-[#1c1c22] border-[#6366f1]/40 shadow-lg shadow-indigo-950/20' : 'bg-indigo-50/50 border-indigo-200 shadow-md')
-                  : (isDarkMode ? 'bg-[#2a2a33]/45 border-zinc-700/40 hover:border-zinc-600/60' : 'bg-zinc-50 border-zinc-200 hover:bg-zinc-100/80')
-              }`}>
-                <button
-                  onClick={() => setIsAiAssistantOpen(!isAiAssistantOpen)}
-                  className="w-full flex items-center justify-between font-bold text-xs sm:text-sm text-right cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-[#6366f1] shrink-0 animate-pulse" />
-                    <span className={isDarkMode ? 'text-zinc-100 font-sans' : 'text-zinc-800 font-sans'}>
-                      סייע כתיבת כרטיסיות דיון
-                    </span>
-                    <span className="text-[9px] font-black tracking-wide px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase font-sans">
-                      חדש!
-                    </span>
+          {/* AI Assistant Scaffolding Panel */}
+          <div className={`rounded-2xl border p-4.5 mb-5 transition-all duration-300 ${
+            isAiAssistantOpen
+              ? (isDarkMode ? 'bg-[#1c1c22] border-[#6366f1]/40 shadow-lg shadow-indigo-950/20' : 'bg-indigo-50/50 border-indigo-200 shadow-md')
+              : (isDarkMode ? 'bg-[#2a2a33]/45 border-zinc-700/40 hover:border-zinc-600/60' : 'bg-zinc-50 border-zinc-200 hover:bg-zinc-100/80')
+          }`}>
+            <button
+              onClick={() => setIsAiAssistantOpen(!isAiAssistantOpen)}
+              className="w-full flex items-center justify-between font-bold text-xs sm:text-sm text-right cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#6366f1] shrink-0 animate-pulse" />
+                <span className={isDarkMode ? 'text-zinc-100 font-sans' : 'text-zinc-800 font-sans'}>
+                  {scriptMode === 'text' ? 'סייע כתיבת תסריט מלא' : 'סייע כתיבת כרטיסיות דיון'}
+                </span>
+                <span className="text-[9px] font-black tracking-wide px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase font-sans">
+                  חדש!
+                </span>
+              </div>
+              {isAiAssistantOpen ? <ChevronUp className="w-4.5 h-4.5 text-zinc-400" /> : <ChevronDown className="w-4.5 h-4.5 text-zinc-400" />}
+            </button>
+
+            {isAiAssistantOpen && (
+              <div className="mt-4 pt-4 border-t border-zinc-700/25 flex flex-col gap-4 text-xs sm:text-sm">
+                <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'} font-sans`}>
+                  השתמשו בכלי זה כפיגום דיגיטלי (Scaffolding) כדי לתרגם את החומר העיוני שלכם למתווה שיח מוכן להקלטה. 
+                  מלאו את השדות שלהלן, לחצו על כפתור ההפקה והמערכת תעתיק את הפרומפט המתוחכם עבורכם ותפתח את Gemini בדפדפן!
+                </p>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                    שלב א׳ – הזנת הקלט הגולמי (נקודות מפתח, סיכומי שיעור או עוגני תוכן):
+                  </label>
+                  <textarea
+                    value={aiStudentNotes}
+                    onChange={(e) => setAiStudentNotes(e.target.value)}
+                    placeholder="למשל: עקרונות הערכה חלופית, הבדל בין הערכה מסכמת לעיצוב, אתגרי המורה בכיתה הטרוגנית, חשיבות משוב איכותני מעמיק..."
+                    className={`w-full min-h-[90px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed resize-none font-sans border ${
+                      isDarkMode
+                        ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700 focus:border-indigo-500'
+                        : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-400'
+                    }`}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div className="flex flex-col gap-1.5">
+                    <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                      מבנה השיחה:
+                    </label>
+                    <select
+                      value={aiStructure}
+                      onChange={(e) => setAiStructure(e.target.value)}
+                      className={`rounded-xl p-2.5 font-bold cursor-pointer border font-sans ${
+                        isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
+                      }`}
+                    >
+                      <option value="שיחה בין שני אנשים">שיחה בין שני אנשים</option>
+                      <option value="פאנל עמיתים">פאנל עמיתים</option>
+                      <option value="ראיון">ראיון</option>
+                      <option value="מנחה ומומחה">מנחה ומומחה</option>
+                      <option value="משתתף יחיד">משתתף יחיד (מונולוג)</option>
+                    </select>
                   </div>
-                  {isAiAssistantOpen ? <ChevronUp className="w-4.5 h-4.5 text-zinc-400" /> : <ChevronDown className="w-4.5 h-4.5 text-zinc-400" />}
-                </button>
 
-                {isAiAssistantOpen && (
-                  <div className="mt-4 pt-4 border-t border-zinc-700/25 flex flex-col gap-4 text-xs sm:text-sm">
-                    <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'} font-sans`}>
-                      השתמשו בכלי זה כפיגום דיגיטלי (Scaffolding) כדי לתרגם את החומר העיוני שלכם למתווה שיח מוכן להקלטה. 
-                      מלאו את השדות שלהלן, לחצו על כפתור ההפקה והמערכת תעתיק את הפרומפט המתוחכם עבורכם ותפתח את Gemini בדפדפן!
-                    </p>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                      זמן כולל מיועד:
+                    </label>
+                    <select
+                      value={aiDuration}
+                      onChange={(e) => setAiDuration(e.target.value)}
+                      className={`rounded-xl p-2.5 font-bold border cursor-pointer font-sans ${
+                        isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
+                      }`}
+                    >
+                      <option value="דקה אחת">דקה אחת</option>
+                      <option value="שתי דקות">שתי דקות</option>
+                      <option value="חמש דקות">חמש דקות</option>
+                      <option value="עשר דקות">עשר דקות</option>
+                      <option value="ללא הגבלת זמן">ללא הגבלת זמן</option>
+                    </select>
+                  </div>
+                </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                        שלב א׳ – הזנת הקלט הגולמי (נקודות מפתח, סיכומי שיעור או עוגני תוכן):
-                      </label>
-                      <textarea
-                        value={aiStudentNotes}
-                        onChange={(e) => setAiStudentNotes(e.target.value)}
-                        placeholder="למשל: עקרונות הערכה חלופית, הבדל בין הערכה מסכמת לעיצוב, אתגרי המורה בכיתה הטרוגנית, חשיבות משוב איכותני מעמיק..."
-                        className={`w-full min-h-[90px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed resize-none font-sans border ${
-                          isDarkMode
-                            ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700 focus:border-indigo-500'
-                            : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-400'
+                <div className="flex flex-col gap-2 p-3 rounded-xl border border-[#6366f1]/10 bg-indigo-500/5">
+                  <label className={`font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-800'} font-sans`}>
+                    <Book className="w-4 h-4 text-[#6366f1]" />
+                    ארכיטיפ דיאלוגי / קוגניטיבי (לב המהלך הפדגוגי):
+                  </label>
+                  <p className={`text-[11px] leading-relaxed mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} font-sans`}>
+                    בחרו את הפרוטוקול והמבנה הדידקטי המתאים להצפת והערכת הידע שברצונכם להציג:
+                  </p>
+                  <div className="grid grid-cols-1 gap-2">
+                    {[
+                      {
+                        id: 'בית מדרש',
+                        title: 'בית מדרש',
+                        desc: 'מציג, מקשה, מחדד, מסכם (בוחן מורכבות והקשבה עמוקה לזולת)'
+                      },
+                      {
+                        id: 'הסבר לציבור',
+                        title: 'הסבר לציבור',
+                        desc: 'שאלה, הסבר מושגי פשוט, דוגמה מהחיים, והפרכת מיתוס רווח (בוחן ארגון ופישוט ידע)'
+                      },
+                      {
+                        id: 'מקרה מבחן',
+                        title: 'מקרה מבחן',
+                        desc: 'סיפור אישי או אירוע מוחשי מהשטח, ולאחר מכן ניתוח פדגוגי מבוסס תיאוריה (בוחן יישום ואמפתיה)'
+                      },
+                      {
+                        id: 'העמדה שמתפרקת',
+                        title: 'העמדה שמתפרקת',
+                        desc: 'פתיחה בטיעון קיצוני/שכיח, פגישת התנגדויות וסתירות, וחילוץ מסקנה ביקורתית מאוזנת (בוחן חשיבה ביקורתית)'
+                      },
+                      {
+                        id: 'שולחן עגול',
+                        title: 'שולחן עגול',
+                        desc: 'ייצוג בעלי עניין שונים (תלמיד, מורה, הורה, מנהל...) סביב סוגיית ליבה מורכבת (בוחן הבנה מערכתית)'
+                      }
+                    ].map((arch) => (
+                      <label
+                        key={arch.id}
+                        onClick={() => setAiArchetype(arch.id)}
+                        className={`p-2 rounded-lg border transition-all cursor-pointer flex flex-col gap-0.5 text-right font-sans ${
+                          aiArchetype === arch.id
+                            ? (isDarkMode ? 'bg-indigo-950/40 border-[#6366f1] text-white' : 'bg-indigo-50 border-[#6366f1] text-indigo-950')
+                            : (isDarkMode ? 'bg-[#1c1c22] border-zinc-800 hover:border-zinc-700 text-zinc-300' : 'bg-white border-zinc-200 hover:border-zinc-300 text-zinc-700')
                         }`}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                          מבנה השיחה:
-                        </label>
-                        <select
-                          value={aiStructure}
-                          onChange={(e) => setAiStructure(e.target.value)}
-                          className={`rounded-xl p-2.5 font-bold cursor-pointer border font-sans ${
-                            isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
-                          }`}
-                        >
-                          <option value="שיחה בין שני אנשים">שיחה בין שני אנשים</option>
-                          <option value="פאנל עמיתים">פאנל עמיתים</option>
-                          <option value="ראיון">ראיון</option>
-                          <option value="מנחה ומומחה">מנחה ומומחה</option>
-                          <option value="משתתף יחיד">משתתף יחיד (מונולוג)</option>
-                        </select>
-                      </div>
-
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`font-bold flex items-center justify-between ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                          <span>אופן הצגת השיחה:</span>
-                          <span className="text-[10px] font-sans font-normal opacity-75">
-                            (נקבע לפי סגנון העריכה שמעל)
-                          </span>
-                        </label>
-                        <select
-                          disabled
-                          value={aiOutputFormat}
-                          className={`rounded-xl p-2.5 font-bold border cursor-not-allowed opacity-80 font-sans ${
-                            isDarkMode ? 'bg-[#1e1e24] text-zinc-300 border-zinc-800' : 'bg-zinc-100 text-zinc-600 border-zinc-200'
-                          }`}
-                        >
-                          <option value="תסריט מלא">תסריט מלא</option>
-                          <option value="כרטיסיות שיחה דינמיות - Talking Points">כרטיסיות שיחה דינמיות (Talking Points)</option>
-                        </select>
-                      </div>
-                      
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                          זמן כולל מיועד:
-                        </label>
-                        <input
-                          type="text"
-                          value={aiDuration}
-                          onChange={(e) => setAiDuration(e.target.value)}
-                          placeholder="למשל: דקה אחת / 3 דקות"
-                          className={`rounded-xl p-2.5 font-bold border font-sans ${
-                            isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
-                          }`}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2 p-3 rounded-xl border border-[#6366f1]/10 bg-indigo-500/5">
-                      <label className={`font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-800'} font-sans`}>
-                        <Book className="w-4 h-4 text-[#6366f1]" />
-                        ארכיטיפ דיאלוגי / קוגניטיבי (לב המהלך הפדגוגי):
+                      >
+                        <div className="flex items-center gap-1.5 font-bold text-xs">
+                          <input
+                            type="radio"
+                            name="aiArchetype"
+                            checked={aiArchetype === arch.id}
+                            onChange={() => {}}
+                            className="accent-indigo-500 cursor-pointer"
+                          />
+                          <span>{arch.title}</span>
+                        </div>
+                        <span className={`text-[10px] pr-5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                          {arch.desc}
+                        </span>
                       </label>
-                      <p className={`text-[11px] leading-relaxed mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} font-sans`}>
-                        בחרו את הפרוטוקול והמבנה הדידקטי המתאים להצפת והערכת הידע שברצונכם להציג:
-                      </p>
-                      <div className="grid grid-cols-1 gap-2">
-                        {[
-                          {
-                            id: 'בית מדרש',
-                            title: 'בית מדרש',
-                            desc: 'מציג, מקשה, מחדד, מסכם (בוחן מורכבות והקשבה עמוקה לזולת)'
-                          },
-                          {
-                            id: 'הסבר לציבור',
-                            title: 'הסבר לציבור',
-                            desc: 'שאלה, הסבר מושגי פשוט, דוגמה מהחיים, והפרכת מיתוס רווח (בוחן ארגון ופישוט ידע)'
-                          },
-                          {
-                            id: 'מקרה מבחן',
-                            title: 'מקרה מבחן',
-                            desc: 'סיפור אישי או אירוע מוחשי מהשטח, ולאחר מכן ניתוח פדגוגי מבוסס תיאוריה (בוחן יישום ואמפתיה)'
-                          },
-                          {
-                            id: 'העמדה שמתפרקת',
-                            title: 'העמדה שמתפרקת',
-                            desc: 'פתיחה בטיעון קיצוני/שכיח, פגישת התנגדויות וסתירות, וחילוץ מסקנה ביקורתית מאוזנת (בוחן חשיבה ביקורתית)'
-                          },
-                          {
-                            id: 'שולחן עגול',
-                            title: 'שולחן עגול',
-                            desc: 'ייצוג בעלי עניין שונים (תלמיד, מורה, הורה, מנהל...) סביב סוגיית ליבה מורכבת (בוחן הבנה מערכתית)'
-                          }
-                        ].map((arch) => (
-                          <label
-                            key={arch.id}
-                            onClick={() => setAiArchetype(arch.id)}
-                            className={`p-2 rounded-lg border transition-all cursor-pointer flex flex-col gap-0.5 text-right font-sans ${
-                              aiArchetype === arch.id
-                                ? (isDarkMode ? 'bg-indigo-950/40 border-[#6366f1] text-white' : 'bg-indigo-50 border-[#6366f1] text-indigo-950')
-                                : (isDarkMode ? 'bg-[#1c1c22] border-zinc-800 hover:border-zinc-700 text-zinc-300' : 'bg-white border-zinc-200 hover:border-zinc-300 text-zinc-700')
-                            }`}
-                          >
-                            <div className="flex items-center gap-1.5 font-bold text-xs">
-                              <input
-                                type="radio"
-                                name="aiArchetype"
-                                checked={aiArchetype === arch.id}
-                                onChange={() => {}}
-                                className="accent-indigo-500 cursor-pointer"
-                              />
-                              <span>{arch.title}</span>
-                            </div>
-                            <span className={`text-[10px] pr-5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                              {arch.desc}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
+                    ))}
+                  </div>
+                </div>
 
-                    <button
-                      onClick={() => {
-                        if (!aiStudentNotes.trim()) {
-                          setErrorMsg('אנא הזינו קודם כל את רשימות התוכן שלכם בשלב א׳.');
-                          return;
-                        }
+                <button
+                  onClick={() => {
+                    if (!aiStudentNotes.trim()) {
+                      setErrorMsg('אנא הזינו קודם כל את רשימות התוכן שלכם בשלב א׳.');
+                      return;
+                    }
 
-                        const generatedPrompt = `שלום ג׳מיני. אתה מומחה להנדסת פרומפטים פדגוגיים וארכיטקטורת דיאלוגים לתחום הכשרת המורים (MTEACH).
+                    const generatedPrompt = `שלום ג׳מיני. אתה מומחה להנדסת פרומפטים פדגוגיים וארכיטקטורת דיאלוגים לתחום הכשרת המורים (MTEACH).
 התפקיד שלך הוא לתרגם את רשימות התוכן והרעיונות שלי למתווה שיח פדגוגי מוכן להקלטה.
 
 להלן פרטי הפודקאסט המבוקש:
@@ -835,7 +778,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   ${aiArchetype === 'בית מדרש' ? 'עליך לבנות את מהלך הדיון לפי שלבי "בית מדרש": פתיחה בהצגת הנושא/מושג, העלאת קושי או קושיה מהותית, חידוד ודיוק הסתירה, וסיכום רפלקטיבי אינטגרטיבי (לבחינת מורכבות והקשבה עמוקה).' : ''}
   ${aiArchetype === 'הסבר לציבור' ? 'עליך לבנות את מהלך הדיון לפי שלבי "הסבר לציבור": שאילת שאלה מעוררת עניין, מתן הסבר מושגי פשוט וברור, הדגמה מעשית מהחיים, והפרכת מיתוס רווח בנושא (לבחינת ארגון ופישוט ידע).' : ''}
   ${aiArchetype === 'מקרה מבחן' ? 'עליך לבנות את מהלך הדיון לפי שלבי "מקרה מבחן": פתיחה בסיפור אישי או אירוע מוחשי שהתרחש בשטח/בכיתה, ולאחר מכן ניתוח פדגוגי מעמיק מתוך החומר התיאורטי והכלים שלמדנו (לבחינת יישום מעשי ואמפתיה).' : ''}
-  ${aiArchetype === 'העמדה שמתפרקת' ? 'עליך לבנות את מהלך הדיון לפי שלבי "העמדה שמתפרקת": הצגת טיעון קיצוני או עמדה מסורתית רווחת בפתיחה, מפגש עם התנגדויות וסתירות פנימיות, וחילוץ של מסקנה ביקורתית ומאוזנת (לבחינת חשיבה ביקורתית מורכבת).' : ''}
+  ${aiArchetype === 'העמדה שמתפרקת' ? 'עליך לבנות את מהלך הדיון לפי שלבי "העמדה שמתפרקת": הצגת טיעון קיצוני או עמדה מסורתית רווחת בפתיחה, מפגש WITH התנגדויות וסתירות פנימיות, וחילוץ של מסקנה ביקורתית ומאוזנת (לבחינת חשיבה ביקורתית מורכבת).' : ''}
   ${aiArchetype === 'שולחן עגול' ? 'עליך לבנות את מהלך הדיון סביב סוגיית ליבה מורכבת שבה מיוצגים בעלי עניין שונים ומגוונים (למשל: תלמיד, מורה, הורה, מנהל, קובע מדיניות), כאשר כל אחד מציג את זווית ראייתו הייחודית ומתפתח ביניהם דיון דינמי (לבחינת הבנה מערכתיר רחבה).' : ''}
 
 - פורמט מבנה פלט קשיח לפענוח אוטומטי (קריטי):
@@ -845,151 +788,119 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
 אנא הפק כעת את הפלט המבוקש בעברית רהוטה ופדגוגית בדיוק רב, ללא הקדמות נוספות מצידך - התחל ישירות בתוכן הפודקאסט עצמו.`;
 
-                        navigator.clipboard.writeText(generatedPrompt).then(() => {
-                          setAiPromptCopied(true);
-                          setTimeout(() => setAiPromptCopied(false), 4000);
-                          window.open('https://gemini.google.com/', '_blank');
-                        }).catch(err => {
-                          console.error('Failed to copy text: ', err);
-                          window.open('https://gemini.google.com/', '_blank');
-                        });
-                      }}
-                      className="w-full mt-2 py-3 rounded-xl font-bold bg-[#6366f1] hover:bg-indigo-700 text-white shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-xs sm:text-sm font-sans"
-                    >
-                      <Sparkles className="w-4 h-4 text-indigo-200" />
-                      <span>{aiPromptCopied ? '✅ הפרומפט הועתק! פותח את Gemini...' : 'הפק והעתק פרומפט פדגוגי ופתח את Gemini חיצונית'}</span>
-                      <ExternalLink className="w-4 h-4 text-indigo-200 animate-bounce" />
-                    </button>
+                    navigator.clipboard.writeText(generatedPrompt).then(() => {
+                      setAiPromptCopied(true);
+                      setTimeout(() => setAiPromptCopied(false), 4000);
+                      window.open('https://gemini.google.com/', '_blank');
+                    }).catch(err => {
+                      console.error('Failed to copy text: ', err);
+                      window.open('https://gemini.google.com/', '_blank');
+                    });
+                  }}
+                  className="w-full mt-2 py-3 rounded-xl font-bold bg-[#6366f1] hover:bg-indigo-700 text-white shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-xs sm:text-sm font-sans"
+                >
+                  <Sparkles className="w-4 h-4 text-indigo-200" />
+                  <span>{aiPromptCopied ? '✅ הפרומפט הועתק! פותח את Gemini...' : 'הפק והעתק פרומפט פדגוגי ופתח את Gemini חיצונית'}</span>
+                  <ExternalLink className="w-4 h-4 text-indigo-200 animate-bounce" />
+                </button>
 
-                    {aiPromptCopied && (
-                      <p className="text-center font-bold text-emerald-500 text-xs animate-pulse mt-1 font-sans">
-                        הפרומפט הועתק ללוח בהצלחה! הדביקו אותו ב-Gemini שנפתח כעת בכרטיסייה חדשה.
-                      </p>
-                    )}
+                {aiPromptCopied && (
+                  <p className="text-center font-bold text-emerald-500 text-xs animate-pulse mt-1 font-sans">
+                    הפרומפט הועתק ללוח בהצלחה! הדביקו אותו ב-Gemini שנפתח כעת בכרטיסייה חדשה.
+                  </p>
+                )}
 
-                    <div className="border-t border-zinc-700/25 my-5 pt-5 flex flex-col gap-4">
-                      <div className="flex items-center gap-2">
-                        <ArrowRightLeft className="w-4.5 h-4.5 text-indigo-400 shrink-0" />
-                        <h4 className={`font-bold text-sm ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'} font-sans`}>
-                          שלב ב׳ – קליטת התוצר מ-Gemini (פענוח והזרקה אוטומטית)
-                        </h4>
-                      </div>
-                      
-                      <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} font-sans`}>
-                        העתיקו את התוצאה המלאה שג׳מיני ייצר, והדביקו אותה כאן או טענו קובץ טקסט. המערכת תפרק ותאכלס את התוכן שלכם אוטומטית במערכת ההקלטה!
-                      </p>
+                <div className="border-t border-zinc-700/25 my-4 pt-4 flex flex-col gap-4">
+                  <div className="flex items-center gap-2">
+                    <ArrowRightLeft className="w-4.5 h-4.5 text-[#6366f1] shrink-0" />
+                    <h4 className={`font-bold text-sm font-sans ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>
+                      שלב ב׳ – קליטת התוצר מ-Gemini (פענוח והזרקה אוטומטית)
+                    </h4>
+                  </div>
+                  
+                  <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} font-sans`}>
+                    העתיקו את התוצאה המלאה שג׳מיני ייצר, והדביקו אותה כאן. המערכת תפרק ותאכלס את התוכן שלכם אוטומטית במערכת ההקלטה!
+                  </p>
 
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} flex items-center justify-between font-sans`}>
-                          <span>טענו קובץ טקסט (אופציונלי):</span>
-                          <span className="text-[10px] font-mono opacity-60">TXT, MD, JSON</span>
-                        </label>
-                        <input
-                          type="file"
-                          id="file-upload-parser"
-                          accept=".txt,.md,.json"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            const reader = new FileReader();
-                            reader.onload = (event) => {
-                              const text = event.target?.result;
-                              if (typeof text === 'string') {
-                                setAiPastedOutput(text);
-                              }
-                            };
-                            reader.readAsText(file);
-                          }}
-                          className={`text-xs p-2 rounded-xl border focus:outline-none cursor-pointer file:cursor-pointer file:rounded-lg file:border-0 file:text-xs file:font-bold file:px-3 file:py-1 font-sans ${
-                            isDarkMode 
-                              ? 'bg-[#1e1e24] text-zinc-300 border-zinc-800 file:bg-zinc-800 file:text-zinc-200' 
-                              : 'bg-zinc-50 text-zinc-600 border-zinc-200 file:bg-zinc-200 file:text-zinc-800'
-                          }`}
-                        />
-                      </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                      הדביקו כאן את פלט השיחה מ-Gemini:
+                    </label>
+                    <textarea
+                      value={aiPastedOutput}
+                      onChange={(e) => setAiPastedOutput(e.target.value)}
+                      placeholder="=== כרטיסייה ===&#10;סוג: פתיח&#10;טקסט: שלום לכולם...&#10;&#10;או פסקאות מתוך תסריט מלא..."
+                      className={`w-full min-h-[120px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed font-sans border ${
+                        isDarkMode
+                          ? 'bg-[#1e1e24] text-zinc-200 border-zinc-800 focus:border-indigo-500'
+                          : 'bg-zinc-50 text-zinc-800 border-zinc-200 focus:border-indigo-400'
+                      }`}
+                    />
+                  </div>
 
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                          הדביקו כאן את פלט השיחה מ-Gemini:
-                        </label>
-                        <textarea
-                          value={aiPastedOutput}
-                          onChange={(e) => setAiPastedOutput(e.target.value)}
-                          placeholder="=== כרטיסייה ===&#10;סוג: פתיח&#10;טקסט: שלום לכולם...&#10;&#10;או פסקאות מתוך תסריט מלא..."
-                          className={`w-full min-h-[120px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed font-sans border ${
-                            isDarkMode
-                              ? 'bg-[#1e1e24] text-zinc-200 border-zinc-800 focus:border-indigo-500'
-                              : 'bg-zinc-50 text-zinc-800 border-zinc-200 focus:border-indigo-400'
-                          }`}
-                        />
-                      </div>
+                  <button
+                    onClick={() => {
+                      if (!aiPastedOutput.trim()) {
+                        setErrorMsg('אנא הדביקו קודם כל את הפלט מג׳מיני.');
+                        return;
+                      }
 
-                      <div className="flex flex-col gap-1.5">
-                        <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                          יעד פריסת המידע במערכת:
-                        </label>
-                        <div className="flex gap-4 items-center">
-                          <label className="flex items-center gap-1.5 text-xs font-bold cursor-pointer font-sans">
-                            <input
-                              type="radio"
-                              name="aiTargetType"
-                              checked={aiTargetType === 'cards'}
-                              onChange={() => setAiTargetType('cards')}
-                              className="accent-indigo-500 cursor-pointer"
-                            />
-                            <span>כרטיסיות דיון מובנות 🎴</span>
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs font-bold cursor-pointer font-sans">
-                            <input
-                              type="radio"
-                              name="aiTargetType"
-                              checked={aiTargetType === 'text'}
-                              onChange={() => setAiTargetType('text')}
-                              className="accent-indigo-500 cursor-pointer"
-                            />
-                            <span>תסריט מלא רציף 📝</span>
-                          </label>
-                        </div>
-                      </div>
+                      const hasExistingData = aiTargetType === 'cards'
+                        ? scriptCards.length > 0
+                        : scriptContent.trim().length > 0;
 
-                      <button
-                        onClick={() => {
-                          if (!aiPastedOutput.trim()) {
-                            setErrorMsg('אנא הדביקו קודם כל את הפלט מג׳מיני או טענו קובץ טקסט.');
-                            return;
-                          }
-
-                          const hasExistingData = aiTargetType === 'cards'
-                            ? scriptCards.length > 0
-                            : scriptContent.trim().length > 0;
-
-                          if (hasExistingData) {
-                            setConfirmModal({
-                              isOpen: true,
-                              title: 'עדכון תסריט / כרטיסיות 🔄',
-                              description: aiTargetType === 'cards'
-                                ? 'שים לב, פעולה זו תעדכן ותחליף את כרטיסיות הטקסט הנוכחיות בתוצרים שחולצו מג׳מיני. האם לאשר?'
-                                : 'שים לב, פעולה זו תעדכן ותחליף את התסריט הנוכחי בתוצרים שחולצו מג׳מיני. האם לאשר?',
-                              confirmText: 'כן, עדכן והחלף 🔄',
-                              cancelText: 'ביטול',
-                              onConfirm: () => {
-                                proceedExtraction(aiPastedOutput);
-                              }
-                            });
-                          } else {
+                      if (hasExistingData) {
+                        setConfirmModal({
+                          isOpen: true,
+                          title: 'עדכון תסריט / כרטיסיות 🔄',
+                          description: aiTargetType === 'cards'
+                            ? 'שים לב, פעולה זו תעדכן ותחליף את כרטיסיות הטקסט הנוכחיות בתוצרים שחולצו מג׳מיני. האם לאשר?'
+                            : 'שים לב, פעולה זו תעדכן ותחליף את התסריט הנוכחי בתוצרים שחולצו מג׳מיני. האם לאשר?',
+                          confirmText: 'כן, עדכן והחלף 🔄',
+                          cancelText: 'ביטול',
+                          onConfirm: () => {
                             proceedExtraction(aiPastedOutput);
                           }
-                        }}
-                        className="w-full mt-1 py-3 rounded-xl font-bold bg-[#6366f1] hover:bg-indigo-700 text-white shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-xs sm:text-sm font-sans"
-                      >
-                        <ArrowRightLeft className="w-4 h-4 text-indigo-200" />
-                        <span>חלץ, פרק והזרק למערכת ההקלטה</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
+                        });
+                      } else {
+                        proceedExtraction(aiPastedOutput);
+                      }
+                    }}
+                    className="w-full mt-1 py-3 rounded-xl font-bold bg-[#6366f1] hover:bg-indigo-700 text-white shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-xs sm:text-sm font-sans"
+                  >
+                    <ArrowRightLeft className="w-4 h-4 text-indigo-200" />
+                    <span>חלץ, פרק והזרק למערכת ההקלטה</span>
+                  </button>
+                </div>
               </div>
+            )}
+          </div>
 
+          {scriptMode === 'text' ? (
+            <div className="flex-1 flex flex-col min-h-[300px]">
+              <label className="text-sm mb-2 flex items-center justify-between font-bold font-sans">
+                <span className="text-zinc-300">כתוב/י או הדבק/י את התסריט שלך כאן:</span>
+                <button
+                  onClick={() => setScriptContent('')}
+                  className="text-xs font-bold text-red-500 hover:text-red-400 transition-colors flex items-center gap-1 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded-lg cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3 text-red-500" />
+                  <span>נקה הכל</span>
+                </button>
+              </label>
+              <textarea
+                value={scriptContent}
+                onChange={(e) => setScriptContent(e.target.value)}
+                placeholder="הדבק/י כאן טקסט מלא להקראה..."
+                className={`w-full flex-1 rounded-xl p-4 text-base focus:outline-none transition-all leading-relaxed resize-none font-sans border ${
+                  isDarkMode 
+                    ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700/60 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-700' 
+                    : 'bg-zinc-100 text-zinc-800 border-zinc-300 focus:border-zinc-400 focus:ring-1 focus:ring-zinc-300'
+                }`}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
               {/* Cards layout */}
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
