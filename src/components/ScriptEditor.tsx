@@ -87,10 +87,12 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   const [showExamples, setShowExamples] = useState<boolean>(false);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
   const [aiStudentNotes, setAiStudentNotes] = useState<string>("");
-  const [aiStructure, setAiStructure] = useState<string>("שיחה בין שני אנשים");
+  const [aiDynamic, setAiDynamic] = useState<string>("ראיון עיתונאי");
+  const [aiParticipantsCount, setAiParticipantsCount] = useState<string>("2");
+  const [aiCharacterNames, setAiCharacterNames] = useState<string>("מראיין, מרואיין");
   const [aiOutputFormat, setAiOutputFormat] = useState<string>("כרטיסיות שיחה דינמיות - Talking Points");
   const [aiDuration, setAiDuration] = useState<string>("שתי דקות");
-  const [aiArchetype, setAiArchetype] = useState<string>("בית מדרש");
+  const [aiTone, setAiTone] = useState<string>("חברי");
   const [aiPromptCopied, setAiPromptCopied] = useState<boolean>(false);
   const [aiPastedOutput, setAiPastedOutput] = useState<string>("");
   const [aiTargetType, setAiTargetType] = useState<'cards' | 'text'>('cards');
@@ -107,6 +109,23 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
       setAiTargetType("cards");
     }
   }, [scriptMode]);
+
+  // Synchronize default participant count and names based on selected dynamic
+  useEffect(() => {
+    if (aiDynamic === "ראיון עיתונאי") {
+      setAiParticipantsCount("2");
+      setAiCharacterNames("מראיין, מרואיין");
+    } else if (aiDynamic === "דיבייט") {
+      setAiParticipantsCount("2");
+      setAiCharacterNames("משתתף א', משתתף ב'");
+    } else if (aiDynamic === "שיחת סלון") {
+      setAiParticipantsCount("3");
+      setAiCharacterNames("מנחה, יעל, תומר");
+    } else if (aiDynamic === "מונולוג חקר") {
+      setAiParticipantsCount("1");
+      setAiCharacterNames("דובר");
+    }
+  }, [aiDynamic]);
 
   const handleAddCard = (type: 'intro' | 'body' | 'outro') => {
     const newCard: ScriptCard = {
@@ -663,45 +682,31 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
               <div className="mt-4 pt-4 border-t border-zinc-700/25 flex flex-col gap-4 text-xs sm:text-sm">
                 <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'} font-sans`}>
                   השתמשו בכלי זה כפיגום דיגיטלי (Scaffolding) כדי לתרגם את החומר העיוני שלכם למתווה שיח מוכן להקלטה. 
-                  מלאו את השדות שלהלן, לחצו על כפתור ההפקה והמערכת תעתיק את הפרומפט המתוחכם עבורכם ותפתח את Gemini בדפדפן!
+                  מלאו את השדות שלהלן, העתיקו את הפרומפט וקבלו תוצר מושלם מג׳מיני.
                 </p>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                    שלב א׳ – הזנת הקלט הגולמי (נקודות מפתח, סיכומי שיעור או עוגני תוכן):
+                {/* Step A - Student Notes / Summary Input */}
+                <div className="flex flex-col gap-1.5 p-3.5 rounded-xl border border-zinc-700/25 bg-zinc-800/10">
+                  <label className={`font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                    <Book className="w-4 h-4 text-[#6366f1] shrink-0" />
+                    הדבקת סיכום השיעור / נקודות מפתח / חומרי למידה:
                   </label>
+                  <p className={`text-[11px] leading-relaxed mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} font-sans`}>
+                    הזינו את סיכום המאמר או נקודות התוכן שאתם רוצים להעביר בפרק:
+                  </p>
                   <textarea
                     value={aiStudentNotes}
                     onChange={(e) => setAiStudentNotes(e.target.value)}
-                    placeholder="למשל: עקרונות הערכה חלופית, הבדל בין הערכה מסכמת לעיצוב, אתגרי המורה בכיתה הטרוגנית, חשיבות משוב איכותני מעמיק..."
-                    className={`w-full min-h-[90px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed resize-none font-sans border ${
+                    placeholder="לדוגמה:&#10;- למידה מכוונת הישג מפחיתה את חדוות הלמידה של התלמידים.&#10;- חשיבות היכולת של המורה לבצע רפלקציה בזמן אמת (Reflection-in-action)..."
+                    className={`w-full min-h-[120px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed font-sans border ${
                       isDarkMode
-                        ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700 focus:border-indigo-500'
-                        : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-400'
+                        ? 'bg-[#1e1e24] text-zinc-200 border-zinc-800 focus:border-indigo-500'
+                        : 'bg-zinc-50 text-zinc-800 border-zinc-200 focus:border-indigo-400'
                     }`}
                   />
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  <div className="flex flex-col gap-1.5">
-                    <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
-                      מבנה השיחה:
-                    </label>
-                    <select
-                      value={aiStructure}
-                      onChange={(e) => setAiStructure(e.target.value)}
-                      className={`rounded-xl p-2.5 font-bold cursor-pointer border font-sans ${
-                        isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
-                      }`}
-                    >
-                      <option value="שיחה בין שני אנשים">שיחה בין שני אנשים</option>
-                      <option value="פאנל עמיתים">פאנל עמיתים</option>
-                      <option value="ראיון">ראיון</option>
-                      <option value="מנחה ומומחה">מנחה ומומחה</option>
-                      <option value="משתתף יחיד">משתתף יחיד (מונולוג)</option>
-                    </select>
-                  </div>
-
                   <div className="flex flex-col gap-1.5">
                     <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
                       זמן כולל מיועד:
@@ -720,49 +725,99 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                       <option value="ללא הגבלת זמן">ללא הגבלת זמן</option>
                     </select>
                   </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                      מספר משתתפים:
+                    </label>
+                    <select
+                      value={aiParticipantsCount}
+                      onChange={(e) => setAiParticipantsCount(e.target.value)}
+                      className={`rounded-xl p-2.5 font-bold border cursor-pointer font-sans ${
+                        isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700' : 'bg-white text-zinc-800 border-zinc-300'
+                      }`}
+                    >
+                      <option value="1">משתתף יחיד</option>
+                      <option value="2">שני משתתפים</option>
+                      <option value="3">שלושה משתתפים</option>
+                      <option value="4">ארבעה משתתפים</option>
+                      <option value="5">חמישה משתתפים או יותר</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                    שמות הדמויות / משתתפים:
+                  </label>
+                  <input
+                    type="text"
+                    value={aiCharacterNames}
+                    onChange={(e) => setAiCharacterNames(e.target.value)}
+                    placeholder="לדוגמה: מראיין, דוד בן-גוריון"
+                    className={`rounded-xl p-2.5 font-bold border font-sans ${
+                      isDarkMode
+                        ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700 focus:border-indigo-500'
+                        : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-400'
+                    }`}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className={`font-bold ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+                    טון התסריט / כרטיסיות הדיון:
+                  </label>
+                  <select
+                    value={aiTone}
+                    onChange={(e) => setAiTone(e.target.value)}
+                    className={`rounded-xl p-2.5 font-bold border cursor-pointer font-sans ${
+                      isDarkMode ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700 focus:border-indigo-500' : 'bg-white text-zinc-800 border-zinc-300 focus:border-indigo-400'
+                    }`}
+                  >
+                    <option value="חברי">חברי (חם, בגובה העיניים)</option>
+                    <option value="אקדמי">אקדמי (רשמי ומקצועי)</option>
+                    <option value="שיחת רחוב">שיחת רחוב (יומיומי, סלנג קליל)</option>
+                    <option value="עצבני">עצבני (טמפרמנטי, מתווכח בלהט)</option>
+                    <option value="אינטימי">אינטימי (אישי ורגיש)</option>
+                  </select>
                 </div>
 
                 <div className="flex flex-col gap-2 p-3 rounded-xl border border-[#6366f1]/10 bg-indigo-500/5">
                   <label className={`font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-800'} font-sans`}>
                     <Book className="w-4 h-4 text-[#6366f1]" />
-                    ארכיטיפ דיאלוגי / קוגניטיבי (לב המהלך הפדגוגי):
+                    דינמיקת השיח המבוקשת:
                   </label>
                   <p className={`text-[11px] leading-relaxed mb-1 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-500'} font-sans`}>
-                    בחרו את הפרוטוקול והמבנה הדידקטי המתאים להצפת והערכת הידע שברצונכם להציג:
+                    בחרו את הפורמט הדידקטי המתאים להצפת הידע שברצונכם להציג:
                   </p>
                   <div className="grid grid-cols-1 gap-2">
                     {[
                       {
-                        id: 'בית מדרש',
-                        title: 'בית מדרש',
-                        desc: 'מציג, מקשה, מחדד, מסכם (בוחן מורכבות והקשבה עמוקה לזולת)'
+                        id: 'ראיון עיתונאי',
+                        title: 'ראיון עיתונאי',
+                        desc: 'מראיין שואל שאלות עומק מאתגרות, ומרואיין (מומחה) משיב מתוך בקיאות ומבוסס ראיות.'
                       },
                       {
-                        id: 'הסבר לציבור',
-                        title: 'הסבר לציבור',
-                        desc: 'שאלה, הסבר מושגי פשוט, דוגמה מהחיים, והפרכת מיתוס רווח (בוחן ארגון ופישוט ידע)'
+                        id: 'דיבייט',
+                        title: 'דיבייט (עימות רטורי)',
+                        desc: 'עימות מובנה וקצבי בין שתי עמדות מנוגדות סביב סוגיה שנויה במחלוקת. הצגת טיעונים והפרכת עמדת הנגד.'
                       },
                       {
-                        id: 'מקרה מבחן',
-                        title: 'מקרה מבחן',
-                        desc: 'סיפור אישי או אירוע מוחשי מהשטח, ולאחר מכן ניתוח פדגוגי מבוסס תיאוריה (בוחן יישום ואמפתיה)'
+                        id: 'שיחת סלון',
+                        title: 'שיחת סלון (פאנל)',
+                        desc: 'שיחה קבוצתית קולחת וחופשית (מנחה + משתתפים) המנגישה ידע מורכב בצורה חברתית וטבעית.'
                       },
                       {
-                        id: 'העמדה שמתפרקת',
-                        title: 'העמדה שמתפרקת',
-                        desc: 'פתיחה בטיעון קיצוני/שכיח, פגישת התנגדויות וסתירות, וחילוץ מסקנה ביקורתית מאוזנת (בוחן חשיבה ביקורתית)'
-                      },
-                      {
-                        id: 'שולחן עגול',
-                        title: 'שולחן עגול',
-                        desc: 'ייצוג בעלי עניין שונים (תלמיד, מורה, הורה, מנהל...) סביב סוגיית ליבה מורכבת (בוחן הבנה מערכתית)'
+                        id: 'מונולוג חקר',
+                        title: 'מונולוג חקר (סולו)',
+                        desc: 'הגשת מונולוג אישי, סוחף ומובנה היטב של דובר יחיד, המשלב חקירה תיאורטית מעמיקה יחד עם סיפור נרטיבי או ניתוח מקרה בוחן.'
                       }
                     ].map((arch) => (
                       <label
                         key={arch.id}
-                        onClick={() => setAiArchetype(arch.id)}
+                        onClick={() => setAiDynamic(arch.id)}
                         className={`p-2 rounded-lg border transition-all cursor-pointer flex flex-col gap-0.5 text-right font-sans ${
-                          aiArchetype === arch.id
+                          aiDynamic === arch.id
                             ? (isDarkMode ? 'bg-indigo-950/40 border-[#6366f1] text-white' : 'bg-indigo-50 border-[#6366f1] text-indigo-950')
                             : (isDarkMode ? 'bg-[#1c1c22] border-zinc-800 hover:border-zinc-700 text-zinc-300' : 'bg-white border-zinc-200 hover:border-zinc-300 text-zinc-700')
                         }`}
@@ -770,8 +825,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         <div className="flex items-center gap-1.5 font-bold text-xs">
                           <input
                             type="radio"
-                            name="aiArchetype"
-                            checked={aiArchetype === arch.id}
+                            name="aiDynamic"
+                            checked={aiDynamic === arch.id}
                             onChange={() => {}}
                             className="accent-indigo-500 cursor-pointer"
                           />
@@ -799,34 +854,50 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 1. נקודות מפתח ותוכן עיוני (עוגני תוכן):
 "${aiStudentNotes}"
 
-2. מבנה השיחה: ${aiStructure}
+2. דינמיקת השיח הנבחרת: ${aiDynamic}
 3. פורמט הפלט המבוקש: ${aiOutputFormat}
 4. משך זמן מיועד: ${aiDuration}
-5. ארכיטיפ קוגניטיבי/דיאלוגי מוביל: ${aiArchetype}
+5. מספר המשתתפים: ${aiParticipantsCount}
+6. שמות הדמויות / המשתתפים: ${aiCharacterNames}
+7. טון מבוקש: ${aiTone}
 
 הנחיות פדגוגיות ומבניות קשיחות שעליך ליישם בדיוק רב:
 - עוגני תוכן מובלעים: ודא שכל עוגני התוכן והמושגים שציינתי ברשימות משולבים באופן טבעי לאורך הדיון.
-- ללא הערות טון או הנחיות משחק: אין לכתוב בסוגריים עגולים שום הנחיה לגבי טון הדיבור, אינטונציה, הבעה או רגש של המשתתפים (למשל, אל תכתוב "(בחיוך)", "(בהפתעה)", "(בטון רפלקטיבי)"). הסטודנטים יחליטו בעצמם כיצד לגשת לשיח ולהביע את עצמם.
-- ללא הערות הפקה, מעברים או מוזיקה: אין לכתוב בסוגריים מרובעים או עגולים שום הנחיות בימוי, אפקטים, מוזיקה או מעברים (למשל, אל תכתוב "[מוזיקת רקע עולה]", "[הפסקה]", "[מעבר לכרטיסייה הבאה]").
+- ללא הערות טון או הנחיות משחק: אין לכתוב בסוגריים עגולים שום הנחיה לגבי טון הדיבור, אינטונציה, הבעה או רגש של המשתתפים. הסטודנטים יחליטו בעצמם כיצד לגשת לשיח ולהביע את עצמם. השפה עצמה של הדו-שיח או נקודות השיחה צריכה להביע את הטון המבוקש, ללא תיוג מפורש של טונים בטקסט.
+- ללא הערות הפקה, מעברים או מוזיקה: אין לכתוב בסוגריים מרובעים או עגולים שום הנחיות בימוי, אפקטים, מוזיקה או מעברים.
 
-- התאמה מלאה לפורמט הפלט:
+- שמירה על טון הדיבור המבוקש (${aiTone}): עליך לעצב את השפה, הבחירה המילולית וסגנון המשפטים לפי הטון שנבחר:
+  * חברי: סגנון חם, ידידותי, מעודד ובגובה העיניים.
+  * אקדמי: סגנון רשמי, מנוסח בקפידה, עשיר במושגים מקצועיים ורציני.
+  * שיחת רחוב: סגנון יומיומי חופשי, קליל, עם שימוש בסלנג נפוץ ובאינטראקציה טבעית ומשוחררת.
+  * עצבני: סגנון טמפרמנטי, קולני, לעיתים חסר סבלנות, המתווכח בלהט רב, מביע התנגדות ויוצר חיכוך דינמי.
+  * אינטימי: סגנון קרוב, אישי, רגיש, שקט ואיטי, המבוסס על שיתוף כן של רגשות ומחשבות פנימיות.
+
+- התאמה מלאה לדינמיקת השיח הנבחרת (${aiDynamic}):
+  ${aiDynamic === 'ראיון עיתונאי' ? 'המבנה מבוסס על ראיון א-סימטרי (מראיין ומרואיין/מומחה). המראיין מנווט עם שאלות חשיבה מאתגרות שנבנו מראש דרך תחקיר, מזהה נקודות תורפה ודוחף לעומק. המרואיין מביא את עומק התוכן העיוני, עונה בצורה ממוקדת, מנומקת ומבוססת ראיות.' : ''}
+  ${aiDynamic === 'דיבייט' ? 'המבנה מבוסס על דו-שיח ועימות רטורי מובנה וקצבי בין שתי עמדות מנוגדות סביב סוגיה שנויה במחלוקת. המשתתפים מציגים מערך טיעונים קשיח מבוסס ראיות, ומקשיבים באופן פעיל כדי להגיב ולהפריך את עמדת הצד השני. הקפד על חוקי הלוגיקה והנימוק.' : ''}
+  ${aiDynamic === 'שיחת סלון' ? 'המבנה מבוסס על פאנל עם מנחה (3 משתתפים ומעלה). השיחה קבוצתית, קולחת, אסוציאטיבית ובגובה העיניים. על המשתתפים לתרגם ידע מופשט ומושגים תיאורטיים לדיאלוג קהילתי, לשלב אנלוגיות והומור. המשתתפים משלימים זה את דברי זה באורגניות.' : ''}
+  ${aiDynamic === 'מונולוג חקר' ? 'המבנה מבוסס על משתתף יחיד (סולו שואו – דובר בודד הפונה ישירות אל המאזין). הדובר מגיש מונולוג אישי, סוחף ומובנה היטב המשלב חקירה תיאורטית מעמיקה יחד עם סיפור נרטיבי או מקרה בוחן מעשי מהשטח, תוך שמירה על רמה גבוהה של קשב, רפלקציה עצמית עמוקה, קצב משתנה וטיעונים חדים.' : ''}
+
+- שמירה קפדנית על שמות המשתתפים (${aiCharacterNames}) ומספר המשתתפים (${aiParticipantsCount}):
+  יש לוודא שהתסריט או כרטיסיות השיחה מכילים בדיוק את הדמויות האלה ללא המצאת שמות אחרים או חריגה ממספר המשתתפים שצוין!
+
+- התאמה מלאה לפורמט הפלט המבוקש (קריטי!):
   ${aiOutputFormat === 'תסריט מלא' 
-    ? `עבור "תסריט מלא": כתוב תסריט דיאלוג מלא וזורם בשפה דבורה, חמה וטבעית מנקודת המבט של הסטודנטים המקליטים (כתיבה בגוף ראשון), אך ללא שום הנחיות טון או מוזיקה בסוגריים.` 
-    : `עבור "כרטיסיות שיחה דינמיות - Talking Points": חל איסור מוחלט ומלא לכתוב תסריט, דיאלוג או משפטים מוכנים מראש לקריאה (אסור לכתוב "משה: ..." או "רועי: ..."). 
-    התוכן של כל כרטיסייה חייב להיות מנוסח אך ורק כנקודות מפתח (Bullet Points), מושגי ליבה, כיווני מחשבה, רעיונות ושאלות מנחות לכל משתתף שיאפשרו לסטודנטים לנהל שיח ספונטני וטבעי לחלוטין - ללא הקראת טקסט מובנה מילה במילה. זהו לב העניין של הכרטיסיות!`
+    ? `עבור "תסריט מלא": כתוב תסריט דיאלוג מלא וזורם בשפה דבורה, חמה וטבעית מנקודת המבט של הסטודנטים המקליטים. על המילים להיות כתובות מילה במילה ללא הנחיות טון.` 
+    : `עבור "כרטיסיות שיחה דינמיות - Talking Points": חל איסור מוחלט ומלא לכתוב תסריט, דיאלוג או משפטים מוכנים מראש לקריאה! 
+    התוכן של כל כרטיסייה חייב להיות מנוסח אך ורק כנקודות מפתח (Bullet Points). 
+    ב${aiDynamic}: 
+    ${aiDynamic === 'ראיון עיתונאי' ? 'ספק כרטיסיית שאלות ליבה ונקודות מעקב למראיין, וכרטיסיית עוגני תוכן ונתונים גולמיים (ללא תשובות מנוסחות) למרואיין.' : ''}
+    ${aiDynamic === 'דיבייט' ? 'ספק כרטיסיות עמדה המכילות רק ראיות, נתונים קשיחים ומושגי חובה עבור כל צד.' : ''}
+    ${aiDynamic === 'שיחת סלון' ? 'ספק למנחה ולמשתתפים כרטיסיות של נקודות מפתח, תתי-נושאים ומושגי חובה שיש לשלב לאורך הפרק (ללא ניסוח הדיאלוג עצמו).' : ''}
+    ${aiDynamic === 'מונולוג חקר' ? 'ספק לדובר היחיד כרטיסיית מפת נרטיב קשיחה (מבוא ונרטיב, גוף וניתוח מושגי, תובנות ורפלקציה) ומושגי חובה לשילוב לאורך הפרק (ללא ניסוח המשפטים עצמם).' : ''}`
   }
-
-- מבנה הדיאלוג בהתאם לארכיטיפ הנבחר (${aiArchetype}):
-  ${aiArchetype === 'בית מדרש' ? 'עליך לבנות את מהלך הדיון לפי שלבי "בית מדרש": פתיחה בהצגת הנושא/מושג, העלאת קושי או קושיה מהותית, חידוד ודיוק הסתירה, וסיכום רפלקטיבי אינטגרטיבי (לבחינת מורכבות והקשבה עמוקה).' : ''}
-  ${aiArchetype === 'הסבר לציבור' ? 'עליך לבנות את מהלך הדיון לפי שלבי "הסבר לציבור": שאילת שאלה מעוררת עניין, מתן הסבר מושגי פשוט וברור, הדגמה מעשית מהחיים, והפרכת מיתוס רווח בנושא (לבחינת ארגון ופישוט ידע).' : ''}
-  ${aiArchetype === 'מקרה מבחן' ? 'עליך לבנות את מהלך הדיון לפי שלבי "מקרה מבחן": פתיחה בסיפור אישי או אירוע מוחשי שהתרחש בשטח/בכיתה, ולאחר מכן ניתוח פדגוגי מעמיק מתוך החומר התיאורטי והכלים שלמדנו (לבחינת יישום מעשי ואמפתיה).' : ''}
-  ${aiArchetype === 'העמדה שמתפרקת' ? 'עליך לבנות את מהלך הדיון לפי שלבי "העמדה שמתפרקת": הצגת טיעון קיצוני או עמדה מסורתית רווחת בפתיחה, מפגש WITH התנגדויות וסתירות פנימיות, וחילוץ של מסקנה ביקורתית ומאוזנת (לבחינת חשיבה ביקורתית מורכבת).' : ''}
-  ${aiArchetype === 'שולחן עגול' ? 'עליך לבנות את מהלך הדיון סביב סוגיית ליבה מורכבת שבה מיוצגים בעלי עניין שונים ומגוונים (למשל: תלמיד, מורה, הורה, מנהל, קובע מדיניות), כאשר כל אחד מציג את זווית ראייתו הייחודית ומתפתח ביניהם דיון דינמי (לבחינת הבנה מערכתיר רחבה).' : ''}
 
 - פורמט מבנה פלט קשיח לפענוח אוטומטי (קריטי):
   ${aiOutputFormat === 'תסריט מלא'
-    ? 'אנא החזר את התסריט המלא כפסקאות ברורות, כאשר כל פסקה מתחילה בשם הדובר ונקודתיים, למשל:\nנועם: שלום לכולם...\nמיכל: אהלן נועם...'
-    : 'אנא החזר את כרטיסיות הדיון עטופות בתוויות הפרדה קשיחות של "=== כרטיסייה ===" בדיוק בפורמט הבא עבור כל כרטיסייה:\n\n=== כרטיסייה ===\nסוג: [פתיח / גוף הדיון / סיכום]\nטקסט: [נקודות שיחה מנחות (Talking Points), מושגים, עוגנים ושאלות מפתח ממוקדות לכל דובר - מנוסח אך ורק כנקודות (Bullet Points), ללא תסריט דיאלוג של מילה במילה!]\n\nאין להוסיף טקסט מקדים או מסכם מחוץ לפורמט זה כדי לא לפגוע בפענוח.'}
+    ? `אנא החזר את התסריט המלא כפסקאות ברורות, כאשר כל פסקה מתחילה בשם הדובר ונקודתיים, למשל באמצעות השמות שבחרתי [${aiCharacterNames}], למשל:\n` + aiCharacterNames.split(',')[0].trim() + ': שלום לכולם...\n' + (aiCharacterNames.split(',')[1] ? aiCharacterNames.split(',')[1].trim() + ': אהלן...' : '')
+    : 'אנא החזר את כרטיסיות הדיון עטופות בתוויות הפרדה קשיחות של "=== כרטיסייה ===" בדיוק בפורמט הבא עבור כל כרטיסייה:\n\n=== כרטיסייה ===\nסוג: [פתיח / גוף הדיון / סיכום]\nטקסט: [נקודות שיחה מנחות, מושגים, ראיות ושאלות מפתח ממוקדות לכל דובר - מנוסח אך ורק כנקודות (Bullet Points), ללא תסריט דיאלוג של מילה במילה!]\n\nאין להוסיף טקסט מקדים או מסכם מחוץ לפורמט זה כדי לא לפגוע בפענוח.'}
 
 אנא הפק כעת את הפלט המבוקש בעברית רהוטה ופדגוגית בדיוק רב, ללא הקדמות נוספות מצידך - התחל ישירות בתוכן הפודקאסט עצמו.`;
 
