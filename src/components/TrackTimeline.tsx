@@ -8,13 +8,17 @@ interface TrackTimelineProps {
   onTrimChange: (id: string, start: number, end: number) => void;
   onChangeField?: (id: string, field: 'fadeInDuration' | 'fadeOutDuration' | 'silenceAfter', value: number) => void;
   isDarkMode: boolean;
+  isPreviewing?: boolean;
+  playheadTime?: number | null;
 }
 
 export const TrackTimeline: React.FC<TrackTimelineProps> = ({ 
   track, 
   onTrimChange, 
   onChangeField, 
-  isDarkMode 
+  isDarkMode,
+  isPreviewing = false,
+  playheadTime = null,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activePopover, setActivePopover] = useState<'fadeIn' | 'fadeOut' | 'silence' | null>(null);
@@ -103,6 +107,23 @@ export const TrackTimeline: React.FC<TrackTimelineProps> = ({
   // Convert time to percentage from the right edge
   const startPercent = (track.trimStart / track.duration) * 100;
   const endPercent = (track.trimEnd / track.duration) * 100;
+
+  const safePlayheadTime =
+    typeof playheadTime === 'number'
+      ? Math.max(0, Math.min(track.duration, playheadTime))
+      : null;
+
+  const playheadPercent =
+    safePlayheadTime !== null && track.duration > 0
+      ? (safePlayheadTime / track.duration) * 100
+      : null;
+
+  const formatPlayheadTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+
+    return `${mins}:${secs.toFixed(1).padStart(4, '0')}`;
+  };
 
   // Fade In and Fade Out visual widths as percent of track duration
   const fadeInWidthPercent = useMemo(() => {
@@ -219,6 +240,22 @@ export const TrackTimeline: React.FC<TrackTimelineProps> = ({
             left: `${100 - endPercent}%`
           }}
         />
+
+        {/* Moving playhead indicator (RTL timeline, 0 is right edge) */}
+        {isPreviewing && safePlayheadTime !== null && playheadPercent !== null && (
+          <div
+            className="absolute top-0 bottom-0 z-30 pointer-events-none"
+            style={{ right: `${playheadPercent}%` }}
+          >
+            <div className="absolute top-0 bottom-0 w-[2px] bg-[#ffcc00] shadow-[0_0_6px_rgba(255,204,0,0.85)]" />
+
+            <div className="absolute -top-2 right-1/2 translate-x-1/2 w-2.5 h-2.5 rounded-full bg-[#ffcc00] shadow" />
+
+            <div className="absolute top-full mt-1 right-1/2 translate-x-1/2 px-1.5 py-0.5 rounded bg-[#ffcc00] text-zinc-950 text-[9px] font-mono font-black whitespace-nowrap">
+              {formatPlayheadTime(safePlayheadTime)}
+            </div>
+          </div>
+        )}
 
         {/* --- FADE IN / FADE OUT OVERLAY PILLS DIRECTLY ON THE WAVEFORM --- */}
         {onChangeField && !track.isSilence && (

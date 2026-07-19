@@ -524,10 +524,82 @@ export default function App() {
     micAudioCtxRef.current = null;
   };
 
+  const cancelRecordingPreparation = async () => {
+    recordingPreparationCancelledRef.current = true;
+
+    if (recordingPreparationTimeoutRef.current !== null) {
+      clearTimeout(recordingPreparationTimeoutRef.current);
+      recordingPreparationTimeoutRef.current = null;
+    }
+
+    setIsPreparingRecording(false);
+    setRecordingPreparationSeconds(0);
+
+    await releaseLiveRecordingResources();
+  };
+
   // Audio Playback State for Individual Tracks
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const [playingFullTrackId, setPlayingFullTrackId] = useState<string | null>(null);
   const audioElementsRef = useRef<{ [key: string]: HTMLAudioElement }>({});
+
+  const trimPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const trimPreviewTrackIdRef = useRef<string | null>(null);
+  const trimPreviewRafRef = useRef<number | null>(null);
+
+  const trimPreviewSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const trimPreviewGainRef = useRef<GainNode | null>(null);
+  const trimPreviewStartCtxTimeRef = useRef<number>(0);
+  const trimPreviewStartOffsetRef = useRef<number>(0);
+
+  const [isPreparingRecording, setIsPreparingRecording] = useState<boolean>(false);
+  const [recordingPreparationSeconds, setRecordingPreparationSeconds] = useState<number>(0);
+  const recordingPreparationTimeoutRef = useRef<number | null>(null);
+  const recordingPreparationCancelledRef = useRef<boolean>(false);
+
+  const [trimPreviewPosition, setTrimPreviewPosition] = useState<{
+    trackId: string;
+    time: number;
+  } | null>(null);
+
+  const stopTrimPreview = () => {
+    if (trimPreviewRafRef.current !== null) {
+      cancelAnimationFrame(trimPreviewRafRef.current);
+      trimPreviewRafRef.current = null;
+    }
+
+    if (trimPreviewSourceRef.current) {
+      try {
+        trimPreviewSourceRef.current.stop();
+      } catch (e) {
+        // Source might have already stopped or not started
+      }
+      trimPreviewSourceRef.current.disconnect();
+      trimPreviewSourceRef.current = null;
+    }
+
+    if (trimPreviewGainRef.current) {
+      try {
+        trimPreviewGainRef.current.disconnect();
+      } catch (e) {}
+      trimPreviewGainRef.current = null;
+    }
+
+    const audio = trimPreviewAudioRef.current;
+
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.onpause = null;
+      cleanupAudioElement(audio);
+    }
+
+    trimPreviewAudioRef.current = null;
+    trimPreviewTrackIdRef.current = null;
+
+    setPlayingTrackId(null);
+    setTrimPreviewPosition(null);
+  };
 
   // Merge & Export State
   const [isMerging, setIsMerging] = useState<boolean>(false);
@@ -575,6 +647,26 @@ export default function App() {
   useEffect(() => {
     setHasUnmergedChanges(true);
   }, [tracks]);
+
+  // Auto-clear success notifications after 3 seconds
+  useEffect(() => {
+    if (successMsg) {
+      const timer = setTimeout(() => {
+        setSuccessMsg(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMsg]);
+
+  // Auto-clear error notifications after 3 seconds
+  useEffect(() => {
+    if (errorMsg) {
+      const timer = setTimeout(() => {
+        setErrorMsg(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorMsg]);
 
   const isScrolled = true;
   const showHeader = true;
@@ -991,7 +1083,8 @@ export default function App() {
   // Clean up canvas animations and audio elements on unmount
   useEffect(() => {
     return () => {
-      releaseLiveRecordingResources();
+      cancelRecordingPreparation();
+      stopTrimPreview();
       // Clean up playing audio elements
       Object.values(audioElementsRef.current).forEach((audio) => {
         cleanupAudioElement(audio);
@@ -1069,7 +1162,7 @@ export default function App() {
     const dataArray = new Uint8Array(bufferLength);
 
     const draw = () => {
-      if (!isRecording) return;
+      if (!isRecording && !isPreparingRecording) return;
       animationFrameRef.current = requestAnimationFrame(draw);
 
       analyser.getByteFrequencyData(dataArray);
@@ -1105,8 +1198,19 @@ export default function App() {
     draw();
   };
 
+  const isSafariBrowser = (): boolean => {
+    const ua = navigator.userAgent;
+    return (
+      /Safari/i.test(ua) &&
+      !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua)
+    );
+  };
+
   // 3. Start Recording
   const startRecording = async () => {
+    if (isRecording || isPreparingRecording) {
+      return;
+    }
     setErrorMsg(null);
     setSuccessMsg(null);
     audioChunksRef.current = [];
@@ -1148,6 +1252,12 @@ export default function App() {
       }
       recordingStreamRef.current = stream;
 
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        console.info('[Recording] Requested constraints:', audioConstraints);
+        console.info('[Recording] Actual microphone settings:', audioTrack.getSettings());
+      }
+
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
       const micAudioCtx = new AudioCtxClass();
       micAudioCtxRef.current = micAudioCtx;
@@ -1160,6 +1270,40 @@ export default function App() {
       source.connect(analyser);
       micAnalyserRef.current = analyser;
 
+      // Start displaying microphone activity immediately during preparation
+      setIsPreparingRecording(true);
+      recordingPreparationCancelledRef.current = false;
+
+      // Trigger canvas drawing animation immediately
+      setTimeout(() => {
+        drawMicLevel();
+      }, 50);
+
+      const warmupMs = isSafariBrowser() ? 3000 : 250;
+      const warmupStartedAt = Date.now();
+
+      while (Date.now() - warmupStartedAt < warmupMs) {
+        if (recordingPreparationCancelledRef.current) {
+          await releaseLiveRecordingResources();
+          setIsPreparingRecording(false);
+          return;
+        }
+
+        const remainingMs = warmupMs - (Date.now() - warmupStartedAt);
+        setRecordingPreparationSeconds(Math.max(1, Math.ceil(remainingMs / 1000)));
+
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      }
+
+      if (recordingPreparationCancelledRef.current) {
+        await releaseLiveRecordingResources();
+        setIsPreparingRecording(false);
+        return;
+      }
+
+      setIsPreparingRecording(false);
+      setRecordingPreparationSeconds(0);
+
       // Choose supported mimeType
       let mimeType = 'audio/webm';
       for (const candidate of RECORDING_MIME_CANDIDATES) {
@@ -1171,7 +1315,9 @@ export default function App() {
 
       const recordingSessionId = `rec-session-${Date.now()}`;
       recordingSessionIdRef.current = recordingSessionId;
-      recordingStartTimeRef.current = Date.now();
+
+      const actualRecordingStartedAt = Date.now();
+      recordingStartTimeRef.current = actualRecordingStartedAt;
 
       const existingTakes = tracks.filter(t => !t.isEffect && !t.isSilence);
       let maxNum = 0;
@@ -1197,8 +1343,8 @@ export default function App() {
         projectId: 'default-project',
         name: trackName,
         mimeType,
-        startedAt: Date.now(),
-        lastChunkAt: Date.now(),
+        startedAt: actualRecordingStartedAt,
+        lastChunkAt: actualRecordingStartedAt,
         chunkCount: 0,
         active: true
       };
@@ -1346,6 +1492,7 @@ export default function App() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      setIsScrolling(false);
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
@@ -1458,6 +1605,9 @@ export default function App() {
 
   // 6. Delete Track
   const handleDeleteTrack = (id: string) => {
+    if (trimPreviewTrackIdRef.current === id) {
+      stopTrimPreview();
+    }
     setTracks((prev) => {
       const toDelete = prev.find((t) => t.id === id);
       if (toDelete && toDelete.audioUrl) {
@@ -1496,6 +1646,9 @@ export default function App() {
 
   // 8. Update individual track fields (name, trimStart, trimEnd, volume)
   const updateTrackField = (id: string, field: keyof PodcastTrack, value: any) => {
+    if (trimPreviewTrackIdRef.current === id && (field === 'trimStart' || field === 'trimEnd')) {
+      stopTrimPreview();
+    }
     setTracks((prev) =>
       prev.map((track) => {
         if (track.id === id) {
@@ -1515,6 +1668,9 @@ export default function App() {
   };
 
   const updateTrackTrim = (id: string, start: number, end: number) => {
+    if (trimPreviewTrackIdRef.current === id) {
+      stopTrimPreview();
+    }
     setTracks((prev) =>
       prev.map((track) => {
         if (track.id === id) {
@@ -1530,7 +1686,7 @@ export default function App() {
   };
 
   // 9. Previewing specific trimmed audio segment
-  const playIndividualTrackSegment = (track: PodcastTrack) => {
+  const playIndividualTrackSegment = async (track: PodcastTrack) => {
     if (track.isSilence) {
       if (playingTrackId === track.id) {
         stopIndividualTrack();
@@ -1549,52 +1705,212 @@ export default function App() {
     }
 
     if (track.isMissingAudio || !track.audioUrl) {
-      setErrorMsg('לא ניתן להשמיע רצועה זו כיוון שקובץ השמע המקורי שלה חסר או פגום.');
+      setErrorMsg(
+        'לא ניתן להשמיע רצועה זו כיוון שקובץ השמע המקורי שלה חסר או פגום.'
+      );
       return;
     }
 
-    // If already playing this track, stop it
-    if (playingTrackId === track.id) {
-      stopIndividualTrack();
+    if (
+      trimPreviewTrackIdRef.current === track.id
+    ) {
+      stopTrimPreview();
       return;
     }
 
-    // Stop any other playing track
-    stopIndividualTrack();
+    stopTrimPreview();
+    stopIndividualFullTrack();
 
-    // Create an HTML5 Audio object or seek to the start time
-    const audio = new Audio(track.audioUrl);
-    audio.currentTime = track.trimStart;
-    audio.volume = track.volume;
-    
-    // Play the segment and schedule a pause when it reaches trimEnd
-    audio.play()
-      .then(() => {
-        setPlayingTrackId(track.id);
-        audioElementsRef.current[track.id] = audio;
+    // Try to get/decode AudioBuffer for Web Audio playback (much more precise and supports seeking in WebM recorded blobs!)
+    let buffer = track.audioBuffer;
+    if (!buffer && track.blob) {
+      try {
+        // Decode on the fly
+        buffer = await decodeFileToBuffer(track.blob);
+        // Store decoded buffer in track state so we don't decode again
+        setTracks((prev) =>
+          prev.map((t) => (t.id === track.id ? { ...t, audioBuffer: buffer } : t))
+        );
+      } catch (err) {
+        console.warn('Failed to decode buffer on-the-fly for Web Audio playback, falling back to HTMLAudioElement:', err);
+      }
+    }
 
-        // Listen to timeupdate to check if we went past trimEnd
-        const checkTime = () => {
-          if (audio.currentTime >= track.trimEnd) {
-            audio.pause();
-            stopIndividualTrack();
-          } else {
-            // Keep checking
-            if (playingTrackId === track.id || audioElementsRef.current[track.id] === audio) {
-              requestAnimationFrame(checkTime);
-            }
-          }
-        };
-        requestAnimationFrame(checkTime);
+    if (buffer) {
+      // PLAY WITH WEB AUDIO API!
+      const audioCtx = getAudioContext();
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
 
-        audio.onended = () => {
-          stopIndividualTrack();
-        };
-      })
-      .catch((err) => {
-        console.error(err);
-        setErrorMsg('שגיאה בניסיון להשמיע את הקטע.');
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(track.volume, audioCtx.currentTime);
+
+      source.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      trimPreviewSourceRef.current = source;
+      trimPreviewGainRef.current = gainNode;
+      trimPreviewTrackIdRef.current = track.id;
+
+      setPlayingTrackId(track.id);
+
+      const latestTrack =
+        latestTracksRef.current.find((item) => item.id === track.id) || track;
+
+      const safeStart = Math.max(
+        0,
+        Math.min(latestTrack.trimStart, Math.max(0, buffer.duration - 0.01))
+      );
+      const trimEnd = latestTrack.trimEnd;
+      const safeDuration = Math.max(0.01, Math.min(trimEnd - safeStart, buffer.duration - safeStart));
+
+      trimPreviewStartCtxTimeRef.current = audioCtx.currentTime;
+      trimPreviewStartOffsetRef.current = safeStart;
+
+      setTrimPreviewPosition({
+        trackId: track.id,
+        time: safeStart,
       });
+
+      source.start(0, safeStart, safeDuration);
+
+      const updatePlayhead = () => {
+        if (
+          trimPreviewSourceRef.current !== source ||
+          trimPreviewTrackIdRef.current !== track.id
+        ) {
+          return;
+        }
+
+        const elapsed = audioCtx.currentTime - trimPreviewStartCtxTimeRef.current;
+        const currentPlayheadTime = trimPreviewStartOffsetRef.current + elapsed;
+
+        setTrimPreviewPosition({
+          trackId: track.id,
+          time: currentPlayheadTime,
+        });
+
+        if (currentPlayheadTime >= trimEnd - 0.02) {
+          stopTrimPreview();
+          return;
+        }
+
+        trimPreviewRafRef.current = requestAnimationFrame(updatePlayhead);
+      };
+
+      trimPreviewRafRef.current = requestAnimationFrame(updatePlayhead);
+
+      source.onended = () => {
+        // If it stopped naturally and is still the active source, trigger stop
+        if (trimPreviewSourceRef.current === source) {
+          stopTrimPreview();
+        }
+      };
+
+      return;
+    }
+
+    // FALLBACK TO HTMLAUDIOELEMENT PLAYBACK (if buffer decoding failed)
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.volume = track.volume;
+    audio.src = track.audioUrl;
+
+    trimPreviewAudioRef.current = audio;
+    trimPreviewTrackIdRef.current = track.id;
+
+    setPlayingTrackId(track.id);
+    setTrimPreviewPosition({
+      trackId: track.id,
+      time: track.trimStart,
+    });
+
+    const startPlayback = async () => {
+      if (trimPreviewAudioRef.current !== audio) return;
+
+      const latestTrack =
+        latestTracksRef.current.find((item) => item.id === track.id) || track;
+
+      const durationForSafeStart = (audio.duration && isFinite(audio.duration)) ? audio.duration : latestTrack.duration;
+      const safeStart = Math.max(
+        0,
+        Math.min(latestTrack.trimStart, Math.max(0, durationForSafeStart - 0.01))
+      );
+
+      audio.currentTime = safeStart;
+
+      try {
+        await audio.play();
+      } catch (error) {
+        console.error('Failed to play trimmed preview:', error);
+
+        if (trimPreviewAudioRef.current === audio) {
+          stopTrimPreview();
+        }
+
+        setErrorMsg('שגיאה בניסיון להשמיע את הקטע.');
+        return;
+      }
+
+      const updatePlayhead = () => {
+        if (
+          trimPreviewAudioRef.current !== audio ||
+          trimPreviewTrackIdRef.current !== track.id
+        ) {
+          return;
+        }
+
+        const currentTrack =
+          latestTracksRef.current.find((item) => item.id === track.id) || track;
+
+        const currentTime = audio.currentTime;
+        const currentTrimEnd = currentTrack.trimEnd;
+
+        setTrimPreviewPosition({
+          trackId: track.id,
+          time: currentTime,
+        });
+
+        if (
+          audio.ended ||
+          currentTime >= currentTrimEnd - 0.02
+        ) {
+          stopTrimPreview();
+          return;
+        }
+
+        trimPreviewRafRef.current =
+          requestAnimationFrame(updatePlayhead);
+      };
+
+      trimPreviewRafRef.current =
+        requestAnimationFrame(updatePlayhead);
+    };
+
+    audio.onended = () => {
+      if (trimPreviewAudioRef.current === audio) {
+        stopTrimPreview();
+      }
+    };
+
+    audio.onerror = () => {
+      if (trimPreviewAudioRef.current === audio) {
+        stopTrimPreview();
+        setErrorMsg('שגיאה בניסיון להשמיע את הקטע.');
+      }
+    };
+
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      await startPlayback();
+    } else {
+      audio.addEventListener(
+        'loadedmetadata',
+        () => {
+          void startPlayback();
+        },
+        { once: true }
+      );
+    }
   };
 
   const playIndividualFullTrack = (track: PodcastTrack) => {
@@ -1654,6 +1970,7 @@ export default function App() {
   };
 
   const stopIndividualTrack = () => {
+    stopTrimPreview();
     if (playingTrackId) {
       if (audioElementsRef.current[playingTrackId]) {
         cleanupAudioElement(audioElementsRef.current[playingTrackId]);
@@ -2739,7 +3056,20 @@ export default function App() {
                   exit={{ opacity: 0, scale: 0.9, x: -12 }}
                   className="flex items-center gap-2"
                 >
-                  {isRecording ? (
+                  {isPreparingRecording ? (
+                    <div className="flex items-center gap-2 bg-amber-950/45 border border-amber-800/50 rounded-xl p-1 pr-3 shadow-lg">
+                      <span className="text-xs font-black text-amber-400 animate-pulse">
+                        מכין: {recordingPreparationSeconds} ש'
+                      </span>
+                      <button
+                        type="button"
+                        onClick={cancelRecordingPreparation}
+                        className="px-2 py-1 bg-zinc-700 hover:bg-zinc-600 text-white font-bold rounded-lg transition-all cursor-pointer text-[11px]"
+                      >
+                        ביטול
+                      </button>
+                    </div>
+                  ) : isRecording ? (
                     <div className="flex items-center gap-2.5 bg-red-950/45 border border-red-800/50 rounded-xl p-1 pr-3 shadow-lg shadow-red-500/5">
                       <div className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
@@ -2760,7 +3090,8 @@ export default function App() {
                     <button
                       type="button"
                       onClick={startRecording}
-                      className="bg-red-600 hover:bg-red-500 text-white active:scale-[0.98] font-black rounded-xl transition-all flex items-center gap-1.5 px-3 py-2 text-xs cursor-pointer shadow-md shadow-red-600/15"
+                      disabled={isPreparingRecording || isRecording}
+                      className="bg-red-600 hover:bg-red-500 text-white active:scale-[0.98] font-black rounded-xl transition-all flex items-center gap-1.5 px-3 py-2 text-xs cursor-pointer shadow-md shadow-red-600/15 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Mic className="w-3.5 h-3.5 text-white animate-pulse" />
                       <span>הקלטה חדשה</span>
@@ -3088,7 +3419,7 @@ export default function App() {
                   <div className="flex items-center gap-3.5 justify-end w-full md:w-auto">
                     {/* Upload Audio Tracks Block */}
                     <label className={`flex items-center justify-center gap-2 rounded-xl border transition-all font-black cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242] text-zinc-300 hover:text-white px-4 py-2.5 text-xs flex-1 md:flex-initial w-full md:w-auto ${
-                      isUploading ? 'opacity-60 cursor-not-allowed' : ''
+                      isUploading || isPreparingRecording || isRecording ? 'opacity-50 cursor-not-allowed' : ''
                     }`}>
                       {isUploading ? (
                         <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
@@ -3100,7 +3431,7 @@ export default function App() {
                         type="file"
                         accept="audio/*"
                         multiple
-                        disabled={isUploading}
+                        disabled={isUploading || isPreparingRecording || isRecording}
                         onChange={handleFileUpload}
                         className="hidden"
                       />
@@ -3108,11 +3439,32 @@ export default function App() {
 
                     {/* Direct browser recording container */}
                     <div className={`rounded-xl border flex items-center justify-center transition-all duration-300 flex-1 md:flex-initial w-full md:w-auto ${
-                      isRecording 
+                      isPreparingRecording
+                        ? 'bg-amber-950/25 border-amber-800/55 shadow-lg shadow-amber-500/5 p-1 px-3'
+                        : isRecording 
                         ? 'bg-red-950/25 border-red-800/55 shadow-lg shadow-red-500/5 p-1 px-2' 
                         : 'bg-[#2a2a37]/80 border-zinc-700/40 p-1'
                     }`}>
-                      {isRecording ? (
+                      {isPreparingRecording ? (
+                        <div className="flex items-center gap-3.5 py-1 px-1.5" dir="rtl">
+                          <div className="flex flex-col text-right leading-tight">
+                            <span className="text-xs font-black text-amber-400">מכין את המיקרופון…</span>
+                            <span className="text-[10px] text-zinc-300">ההקלטה תתחיל בעוד {recordingPreparationSeconds} שניות</span>
+                          </div>
+                          <canvas
+                            ref={micCanvasRef}
+                            className="w-20 sm:w-28 h-6 bg-[#1c1c22]/90 rounded overflow-hidden border border-amber-700/20"
+                            width={120}
+                            height={24}
+                          />
+                          <button
+                            onClick={cancelRecordingPreparation}
+                            className="px-3.5 py-2 bg-zinc-700 hover:bg-zinc-650 active:scale-[0.98] text-white font-black rounded-lg transition-all cursor-pointer text-xs min-h-[36px]"
+                          >
+                            ביטול
+                          </button>
+                        </div>
+                      ) : isRecording ? (
                         <div className="flex items-center gap-3">
                           <div className="flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
@@ -3138,7 +3490,8 @@ export default function App() {
                         <div className="flex items-center justify-center gap-3 p-1 w-full">
                           <button
                             onClick={startRecording}
-                            className="bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center justify-center gap-1 px-3 py-1.5 text-xs cursor-pointer shadow-md shadow-red-600/10 w-full md:w-auto"
+                            disabled={isPreparingRecording || isRecording}
+                            className="bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center justify-center gap-1 px-3 py-1.5 text-xs cursor-pointer shadow-md shadow-red-600/10 w-full md:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Mic className="w-3 h-3 text-white animate-pulse" />
                             <span>הקלטה חדשה</span>
@@ -3917,6 +4270,12 @@ export default function App() {
                             onTrimChange={updateTrackTrim}
                             onChangeField={updateTrackField}
                             isDarkMode={isDarkMode}
+                            isPreviewing={trimPreviewPosition?.trackId === track.id}
+                            playheadTime={
+                              trimPreviewPosition?.trackId === track.id
+                                ? trimPreviewPosition.time
+                                : null
+                            }
                           />
                         </div>
 

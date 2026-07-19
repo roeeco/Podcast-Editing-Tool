@@ -52,6 +52,11 @@ interface TrackListProps {
   setUseDucking: (val: boolean) => void;
   toggleMergedAudio: () => void;
   isMergedPlayerPlaying: boolean;
+
+  trimPreviewPosition: {
+    trackId: string;
+    time: number;
+  } | null;
 }
 
 export const TrackList: React.FC<TrackListProps> = ({
@@ -85,6 +90,7 @@ export const TrackList: React.FC<TrackListProps> = ({
   setUseDucking,
   toggleMergedAudio,
   isMergedPlayerPlaying,
+  trimPreviewPosition,
 }) => {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -422,6 +428,12 @@ export const TrackList: React.FC<TrackListProps> = ({
                           track={track}
                           onTrimChange={updateTrackTrim}
                           isDarkMode={isDarkMode}
+                          isPreviewing={trimPreviewPosition?.trackId === track.id}
+                          playheadTime={
+                            trimPreviewPosition?.trackId === track.id
+                              ? trimPreviewPosition.time
+                              : null
+                          }
                         />
                       </div>
 
