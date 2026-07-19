@@ -159,12 +159,12 @@ export const TrackList: React.FC<TrackListProps> = ({
         <div className="flex items-center justify-between pb-3">
           <div className="flex items-center gap-2">
             <FileAudio className="w-5 h-5 text-zinc-500" />
-            <h3 className="text-lg font-bold">רשימת הרצועות בפרויקט</h3>
+            <h3 className="text-lg font-bold">רשימת רצועות</h3>
           </div>
           <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${
             isDarkMode ? 'bg-[#373743] text-zinc-300' : 'bg-zinc-200 text-zinc-800'
           }`}>
-            {tracks.length} רצועות פעילות
+            {tracks.length} רצועות
           </span>
         </div>
 

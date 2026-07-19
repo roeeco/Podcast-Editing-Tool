@@ -572,32 +572,32 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
           </div>
 
           {/* Script Mode & Examples Row */}
-          <div className="flex flex-col gap-4 border-b border-zinc-700/10 pb-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-bold text-zinc-300 font-sans">סגנון עריכה:</span>
-                <div className="flex rounded-xl p-1 gap-1 bg-[#1c1c22]">
-                  <button
-                    onClick={() => setScriptMode('text')}
-                    className={`text-xs px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                      scriptMode === 'text'
-                        ? 'bg-[#373743] text-white shadow'
-                        : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    תסריט
-                  </button>
-                  <button
-                    onClick={() => setScriptMode('cards')}
-                    className={`text-xs px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                      scriptMode === 'cards'
-                        ? 'bg-[#373743] text-white shadow'
-                        : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    כרטיסיות דיון
-                  </button>
-                </div>
+          <div className="flex flex-col gap-2 border-b border-zinc-700/10 pb-4">
+            <label className={`font-bold text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-700'} font-sans`}>
+              סגנון עריכה:
+            </label>
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <div className="flex rounded-xl p-1 gap-1 bg-[#1c1c22]">
+                <button
+                  onClick={() => setScriptMode('text')}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    scriptMode === 'text'
+                      ? 'bg-[#373743] text-white shadow'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  תסריט
+                </button>
+                <button
+                  onClick={() => setScriptMode('cards')}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    scriptMode === 'cards'
+                      ? 'bg-[#373743] text-white shadow'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  כרטיסיות דיון
+                </button>
               </div>
 
               {/* Compact Examples Selector */}

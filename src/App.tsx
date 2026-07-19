@@ -3085,9 +3085,9 @@ export default function App() {
                   </div>
 
                   {/* Left side: Controls */}
-                  <div className="flex flex-wrap items-center gap-3.5 justify-end">
+                  <div className="flex items-center gap-3.5 justify-end w-full md:w-auto">
                     {/* Upload Audio Tracks Block */}
-                    <label className={`flex items-center gap-2 rounded-xl border transition-all font-black cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242] text-zinc-300 hover:text-white px-4 py-2.5 text-xs ${
+                    <label className={`flex items-center justify-center gap-2 rounded-xl border transition-all font-black cursor-pointer bg-[#2a2a37]/80 border-zinc-700/40 hover:bg-[#323242] text-zinc-300 hover:text-white px-4 py-2.5 text-xs flex-1 md:flex-initial w-full md:w-auto ${
                       isUploading ? 'opacity-60 cursor-not-allowed' : ''
                     }`}>
                       {isUploading ? (
@@ -3107,10 +3107,10 @@ export default function App() {
                     </label>
 
                     {/* Direct browser recording container */}
-                    <div className={`rounded-xl border flex items-center gap-2.5 p-1 px-2 transition-all duration-300 ${
+                    <div className={`rounded-xl border flex items-center justify-center transition-all duration-300 flex-1 md:flex-initial w-full md:w-auto ${
                       isRecording 
-                        ? 'bg-red-950/25 border-red-800/55 shadow-lg shadow-red-500/5' 
-                        : 'bg-[#2a2a37]/80 border-zinc-700/40'
+                        ? 'bg-red-950/25 border-red-800/55 shadow-lg shadow-red-500/5 p-1 px-2' 
+                        : 'bg-[#2a2a37]/80 border-zinc-700/40 p-1'
                     }`}>
                       {isRecording ? (
                         <div className="flex items-center gap-3">
@@ -3135,10 +3135,10 @@ export default function App() {
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-3 p-1">
+                        <div className="flex items-center justify-center gap-3 p-1 w-full">
                           <button
                             onClick={startRecording}
-                            className="bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer shadow-md shadow-red-600/10"
+                            className="bg-red-600/95 hover:bg-red-600 text-white active:scale-[0.98] font-bold rounded-lg transition-all flex items-center justify-center gap-1 px-3 py-1.5 text-xs cursor-pointer shadow-md shadow-red-600/10 w-full md:w-auto"
                           >
                             <Mic className="w-3 h-3 text-white animate-pulse" />
                             <span>הקלטה חדשה</span>
@@ -3411,19 +3411,19 @@ export default function App() {
                         setIsScrolling(false);
                         setActiveWordIndex(0);
                       }}
-                      className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer text-xs ${
+                      className={`px-4 py-2 rounded-xl font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-xs flex-1 md:flex-none w-full md:w-auto ${
                         isDarkMode 
                           ? 'bg-[#2a2a35] hover:bg-[#343442] text-zinc-300 border border-zinc-700/50' 
                           : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800'
                       }`}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      התחל מחדש
+                      <span>התחל מחדש</span>
                     </button>
 
                     <button
                       onClick={() => setIsScrolling(!isScrolling)}
-                      className={`px-5 py-2 rounded-xl font-bold transition-all text-xs cursor-pointer ${
+                      className={`px-5 py-2 rounded-xl font-bold transition-all text-xs cursor-pointer flex-1 md:flex-none w-full md:w-auto text-center flex items-center justify-center ${
                         isScrolling
                           ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
                           : (isDarkMode ? 'bg-zinc-200 text-zinc-950 hover:bg-white' : 'bg-zinc-800 text-white hover:bg-zinc-900')
@@ -3518,12 +3518,12 @@ export default function App() {
             <div className="flex items-center justify-between pb-3">
               <div className="flex items-center gap-2">
                 <FileAudio className="w-5 h-5 text-zinc-500" />
-                <h3 className="text-lg font-bold">רשימת הרצועות בפרויקט</h3>
+                <h3 className="text-lg font-bold">רשימת רצועות</h3>
               </div>
               <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${
                 isDarkMode ? 'bg-[#373743] text-zinc-300' : 'bg-zinc-200 text-zinc-800'
               }`}>
-                {tracks.length} רצועות פעילות
+                {tracks.length} רצועות
               </span>
             </div>
 
