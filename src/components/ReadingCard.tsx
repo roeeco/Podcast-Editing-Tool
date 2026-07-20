@@ -2,6 +2,7 @@ import React from 'react';
 import { motion, useMotionValue, useTransform } from 'motion/react';
 import { ScriptCard } from '../types';
 import { formatInstructionsJSX } from '../utils/textHelpers';
+import { getTextDirection } from '../utils/textDirection';
 
 interface ReadingCardProps {
   card: ScriptCard;
@@ -105,10 +106,14 @@ export const ReadingCard: React.FC<ReadingCardProps> = ({
 
       {/* Card Body Text */}
       <div
-        className={`flex-1 text-right leading-relaxed font-sans font-medium pointer-events-none mb-6 whitespace-pre-wrap ${
+        className={`flex-1 leading-relaxed font-sans font-medium pointer-events-none mb-6 whitespace-pre-wrap ${
           isDarkMode ? 'text-zinc-100' : 'text-zinc-800'
         }`}
-        style={{ fontSize: `${fontSize}px` }}
+        dir={getTextDirection(card.text)}
+        style={{
+          textAlign: 'start',
+          fontSize: `${fontSize}px`,
+        }}
       >
         {formatInstructionsJSX(card.text, isDarkMode)}
       </div>

@@ -32,6 +32,7 @@ export const trackMetadataSchema = z.object({
   fadeInDuration: z.number().min(0).max(10).optional().default(0),
   fadeOutDuration: z.number().min(0).max(10).optional().default(0),
   silenceAfter: z.number().min(0).max(10).optional().default(0),
+  playbackMode: z.enum(['sequence', 'background-once', 'background-loop']).optional().default('sequence').catch('sequence'),
 }).refine(data => data.trimStart <= data.duration, {
   message: "זמן התחלת הקיטוע לא יכול להיות גדול מאורך הרצועה",
   path: ["trimStart"]

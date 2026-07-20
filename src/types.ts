@@ -1,3 +1,5 @@
+export type TrackPlaybackMode = 'sequence' | 'background-once' | 'background-loop';
+
 export interface PodcastTrack {
   id: string;
   name: string;
@@ -19,6 +21,7 @@ export interface PodcastTrack {
   sourceSessionId?: string;
   isMissingAudio?: boolean;
   isSilence?: boolean;
+  playbackMode?: TrackPlaybackMode;
 }
 
 export interface RecordingSession {

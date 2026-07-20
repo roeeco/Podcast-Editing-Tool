@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { RecordingSession, RecordingChunk } from '../types';
+import { RecordingSession, RecordingChunk, TrackPlaybackMode } from '../types';
 
 const DB_NAME = 'SmbkPodDB';
 
@@ -87,6 +87,7 @@ export interface StoredTrack {
   silenceAfter?: number;
   sourceSessionId?: string;
   isMissingAudio?: boolean;
+  playbackMode?: TrackPlaybackMode;
 }
 
 export async function saveTrackMetadataToDB(track: Omit<StoredTrack, 'blob'>): Promise<void> {

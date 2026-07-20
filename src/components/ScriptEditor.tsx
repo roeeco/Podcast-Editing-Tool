@@ -13,6 +13,7 @@ import {
   ArrowRightLeft
 } from 'lucide-react';
 import { ScriptCard } from '../types';
+import { getTextDirection } from '../utils/textDirection';
 import { escapeHtml } from '../utils/escapeHtml';
 import { SCRIPT_TEMPLATES } from '../data/templates';
 
@@ -40,8 +41,8 @@ const formatReadTime = (seconds: number) => {
 const formatInstructionsHTML = (text: string): string => {
   if (!text) return '';
   let escaped = escapeHtml(text);
-  escaped = escaped.replace(/(\([^)]+\))/g, '<span class="speaker-instruction" style="color: #b45309 !important; background-color: #fef3c7 !important; font-style: italic; font-size: 13px; padding: 1px 4px; border-radius: 4px; margin: 0 2px; display: inline-block;">$1</span>');
-  escaped = escaped.replace(/(\[[^\]]+\])/g, '<span class="general-instruction" style="color: #3730a3 !important; background-color: #e0e7ff !important; font-style: italic; font-size: 12px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px dashed #c7d2fe; margin: 0 2px; display: inline-block;">$1</span>');
+  escaped = escaped.replace(/(\([^)]+\))/g, '<span class="speaker-instruction" style="color: #b45309 !important; background-color: #fef3c7 !important; font-style: italic; font-size: 13px; padding: 1px 4px; border-radius: 4px; margin: 0 2px; display: inline-block; unicode-bidi: isolate;">$1</span>');
+  escaped = escaped.replace(/(\[[^\]]+\])/g, '<span class="general-instruction" style="color: #3730a3 !important; background-color: #e0e7ff !important; font-style: italic; font-size: 12px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px dashed #c7d2fe; margin: 0 2px; display: inline-block; unicode-bidi: isolate;">$1</span>');
   return escaped;
 };
 
@@ -338,10 +339,11 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
     if (hasCards) {
       cardsHTML = validCards.map((card, idx) => {
         const typeLabel = card.type === 'intro' ? 'פתיח 🎬' : card.type === 'outro' ? 'סיכום 🏁' : 'גוף / נקודה לדיון 🎙️';
+        const cardDir = getTextDirection(card.text);
         return `
           <div class="card-box" style="background-color: #ffffff !important; border: 2px solid #000000 !important; border-radius: 8px; padding: 15px; margin-bottom: 15px; page-break-inside: avoid; direction: rtl; text-align: right; color: #000000 !important;">
-            <span class="card-header-badge" style="font-weight: 800; font-size: 13px; color: #000000 !important; border-bottom: 1.5px solid #000000; padding-bottom: 5px; margin-bottom: 8px; display: block;">${typeLabel} #${idx + 1}</span>
-            <p class="card-body-text" style="font-size: 14px; line-height: 1.6; color: #000000 !important; margin: 0; white-space: pre-wrap; font-weight: 500;">${formatInstructionsHTML(card.text)}</p>
+            <span class="card-header-badge" style="font-weight: 800; font-size: 13px; color: #000000 !important; border-bottom: 1.5px solid #000000; padding-bottom: 5px; margin-bottom: 8px; display: block; unicode-bidi: isolate;">${typeLabel} #${idx + 1}</span>
+            <p class="card-body-text" dir="${cardDir}" style="font-size: 14px; line-height: 1.6; color: #000000 !important; margin: 0; white-space: pre-wrap; font-weight: 500; text-align: start; unicode-bidi: plaintext;">${formatInstructionsHTML(card.text)}</p>
           </div>
         `;
       }).join('');
@@ -352,14 +354,15 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
       formattedTextHTML = scriptContent
         .split('\n\n')
         .map(p => {
+          const paragraphDir = getTextDirection(p);
           const dialogueMatch = p.match(/^(\[[0-9:\s-]*\])?\s*([^:]+):/);
           if (dialogueMatch) {
-            const time = dialogueMatch[1] ? `<span style="color: #4b5563; font-family: monospace; font-size: 13px; margin-left: 8px; background-color: #f3f4f6; padding: 2px 6px; border-radius: 4px;">${escapeHtml(dialogueMatch[1])}</span>` : '';
-            const speaker = `<strong style="color: #000000; font-size: 15px; border-bottom: 2px solid #000000; padding-bottom: 1px;">${escapeHtml(dialogueMatch[2])}:</strong>`;
+            const time = dialogueMatch[1] ? `<span style="color: #4b5563; font-family: monospace; font-size: 13px; margin-left: 8px; background-color: #f3f4f6; padding: 2px 6px; border-radius: 4px; unicode-bidi: isolate; display: inline-block;">${escapeHtml(dialogueMatch[1])}</span>` : '';
+            const speaker = `<strong style="color: #000000; font-size: 15px; border-bottom: 2px solid #000000; padding-bottom: 1px; unicode-bidi: isolate; display: inline-block;">${escapeHtml(dialogueMatch[2])}:</strong>`;
             const rest = p.substring(dialogueMatch[0].length);
-            return `<p style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0;">${time} ${speaker} ${formatInstructionsHTML(rest)}</p>`;
+            return `<p dir="${paragraphDir}" style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0; text-align: start; unicode-bidi: plaintext; white-space: pre-wrap;">${time} ${speaker} ${formatInstructionsHTML(rest)}</p>`;
           }
-          return `<p style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0;">${formatInstructionsHTML(p)}</p>`;
+          return `<p dir="${paragraphDir}" style="margin-bottom: 14px; line-height: 1.6; font-size: 14px; color: #000000; margin-top: 0; text-align: start; unicode-bidi: plaintext; white-space: pre-wrap;">${formatInstructionsHTML(p)}</p>`;
         })
         .join('');
     }
@@ -546,6 +549,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 value={podcastName}
                 onChange={(e) => setPodcastName(e.target.value)}
                 placeholder="למשל: היסטוריה של המדע..."
+                dir="auto"
+                style={{ textAlign: 'start' }}
                 className={`rounded-xl p-2.5 text-sm font-bold border font-sans ${
                   isDarkMode 
                     ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700/60 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-700' 
@@ -562,6 +567,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 value={participants}
                 onChange={(e) => setParticipants(e.target.value)}
                 placeholder="למשל: דניאל ומיכל..."
+                dir="auto"
+                style={{ textAlign: 'start' }}
                 className={`rounded-xl p-2.5 text-sm font-bold border font-sans ${
                   isDarkMode 
                     ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700/60 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-700' 
@@ -698,6 +705,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                     value={aiStudentNotes}
                     onChange={(e) => setAiStudentNotes(e.target.value)}
                     placeholder="לדוגמה:&#10;- למידה מכוונת הישג מפחיתה את חדוות הלמידה של התלמידים.&#10;- חשיבות היכולת של המורה לבצע רפלקציה בזמן אמת (Reflection-in-action)..."
+                    dir="auto"
+                    style={{ textAlign: 'start' }}
                     className={`w-full min-h-[120px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed font-sans border ${
                       isDarkMode
                         ? 'bg-[#1e1e24] text-zinc-200 border-zinc-800 focus:border-indigo-500'
@@ -755,6 +764,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                     value={aiCharacterNames}
                     onChange={(e) => setAiCharacterNames(e.target.value)}
                     placeholder="לדוגמה: מראיין, דוד בן-גוריון"
+                    dir="auto"
+                    style={{ textAlign: 'start' }}
                     className={`rounded-xl p-2.5 font-bold border font-sans ${
                       isDarkMode
                         ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700 focus:border-indigo-500'
@@ -943,6 +954,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                       value={aiPastedOutput}
                       onChange={(e) => setAiPastedOutput(e.target.value)}
                       placeholder="=== כרטיסייה ===&#10;סוג: פתיח&#10;טקסט: שלום לכולם...&#10;&#10;או פסקאות מתוך תסריט מלא..."
+                      dir="auto"
+                      style={{ textAlign: 'start' }}
                       className={`w-full min-h-[120px] rounded-xl p-3 text-xs sm:text-sm focus:outline-none transition-all leading-relaxed font-sans border ${
                         isDarkMode
                           ? 'bg-[#1e1e24] text-zinc-200 border-zinc-800 focus:border-indigo-500'
@@ -1005,6 +1018,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 value={scriptContent}
                 onChange={(e) => setScriptContent(e.target.value)}
                 placeholder="הדבק/י כאן טקסט מלא להקראה..."
+                dir="auto"
+                style={{ textAlign: 'start' }}
                 className={`w-full flex-1 rounded-xl p-4 text-base focus:outline-none transition-all leading-relaxed resize-none font-sans border ${
                   isDarkMode 
                     ? 'bg-[#2d2d37] text-zinc-200 border-zinc-700/60 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-700' 
@@ -1184,6 +1199,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                           value={card.text}
                           onChange={(e) => handleUpdateCardText(card.id, e.target.value)}
                           placeholder="הקלד את נקודות השיח או התסריט לחלק זה..."
+                          dir="auto"
+                          style={{ textAlign: 'start' }}
                           className={`w-full p-2.5 text-sm rounded-lg focus:outline-none transition-all leading-relaxed resize-none overflow-hidden ${
                             isDarkMode 
                               ? 'bg-[#252530] text-zinc-200 focus:ring-1 focus:ring-zinc-700' 

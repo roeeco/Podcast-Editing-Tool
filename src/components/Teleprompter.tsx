@@ -7,6 +7,7 @@ import {
   BookOpen
 } from 'lucide-react';
 import { ScriptCard } from '../types';
+import { getTextDirection } from '../utils/textDirection';
 
 const formatInstructionsJSX = (text: string, isDark: boolean) => {
   if (!text) return null;
@@ -223,6 +224,7 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
       return {
         lineWords: mapped,
         isEmpty: line.trim() === '',
+        direction: getTextDirection(line),
       };
     });
   }, [teleprompterText]);
@@ -509,7 +511,7 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
               />
             )}
             
-            <div className="leading-relaxed font-bold select-none pt-2 pb-48 px-2 text-right space-y-4" style={{ direction: 'rtl' }}>
+            <div className="leading-relaxed font-bold select-none pt-2 pb-48 px-2 space-y-4">
               {parsedWords.length === 0 || (parsedWords.length === 1 && parsedWords[0].isEmpty) ? (
                 <span className={`font-sans ${isDarkMode ? 'text-zinc-600 italic' : 'text-zinc-400 italic'}`}>לא נכתב תסריט עדיין. חזור/י למצב עריכה כדי להזין טקסט.</span>
               ) : (
@@ -518,7 +520,12 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
                     return <div key={pIdx} className="h-4" />;
                   }
                   return (
-                    <div key={pIdx} className="block text-right leading-relaxed mb-4">
+                    <div
+                      key={pIdx}
+                      dir={paragraph.direction}
+                      style={{ textAlign: 'start' }}
+                      className="block leading-relaxed mb-4"
+                    >
                       {paragraph.lineWords.map((wordObj) => {
                         const isCurrent = wordObj.index === activeWordIndex;
                         const isPast = wordObj.index < activeWordIndex;
@@ -527,6 +534,8 @@ export const Teleprompter: React.FC<TeleprompterProps> = ({
                             key={wordObj.index}
                             id={`tele-word-${wordObj.index}`}
                             onClick={() => setActiveWordIndex(wordObj.index)}
+                            dir="auto"
+                            style={{ unicodeBidi: 'isolate' }}
                             className={`transition-all duration-200 rounded px-1.5 py-0.5 inline-block mx-1 cursor-pointer ${
                               isCurrent
                                 ? (isDarkMode ? 'text-black bg-white scale-110 shadow-lg font-black' : 'text-white bg-zinc-850 scale-110 shadow font-black')

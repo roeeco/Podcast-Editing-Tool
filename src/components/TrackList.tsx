@@ -254,6 +254,16 @@ export const TrackList: React.FC<TrackListProps> = ({
                             isDarkMode ? 'bg-zinc-800 text-white' : 'bg-zinc-150 text-zinc-900 shadow-sm'
                           }`}
                         />
+                        {track.playbackMode === 'background-once' && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0">
+                            רקע
+                          </span>
+                        )}
+                        {track.playbackMode === 'background-loop' && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 shrink-0">
+                            רקע בלולאה
+                          </span>
+                        )}
                       </div>
 
                       {/* Expand & Delete & Details */}
@@ -348,6 +358,16 @@ export const TrackList: React.FC<TrackListProps> = ({
                           isDarkMode ? 'bg-[#2d2d37] hover:bg-[#434351] text-white focus:ring-1 focus:ring-zinc-700' : 'bg-zinc-200 hover:bg-zinc-150 text-zinc-900 focus:ring-1 focus:ring-zinc-300 shadow-sm'
                         }`}
                       />
+                      {track.playbackMode === 'background-once' && (
+                        <span className="text-[10px] font-bold px-2 py-1 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0">
+                          רקע
+                        </span>
+                      )}
+                      {track.playbackMode === 'background-loop' && (
+                        <span className="text-[10px] font-bold px-2 py-1 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 shrink-0">
+                          רקע בלולאה
+                        </span>
+                      )}
                     </div>
 
                     {/* Move & volume controls */}
@@ -534,6 +554,29 @@ export const TrackList: React.FC<TrackListProps> = ({
                                 </span>
                               </div>
                             </div>
+
+                            {/* Playback Mode select (אופן השמעה) */}
+                            {!track.isSilence && (
+                              <div className="flex flex-col gap-1.5">
+                                <label className={`text-[11px] font-bold flex items-center gap-1.5 ${isDarkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#ffcc00]" />
+                                  <span>אופן השמעה:</span>
+                                </label>
+                                <select
+                                  value={track.playbackMode || 'sequence'}
+                                  onChange={(e) => updateTrackField(track.id, 'playbackMode', e.target.value)}
+                                  className={`rounded-lg px-2.5 py-1.5 text-xs font-bold focus:outline-none w-full border ${
+                                    isDarkMode
+                                      ? 'bg-[#2d2d37] hover:bg-[#434351] text-white border-zinc-700'
+                                      : 'bg-white hover:bg-zinc-50 text-zinc-900 border-zinc-300 shadow-sm'
+                                  }`}
+                                >
+                                  <option value="sequence">רגיל — אחד אחרי השני</option>
+                                  <option value="background-once">רקע — פעם אחת במקביל</option>
+                                  <option value="background-loop">רקע — לולאה עד סוף ההסכת</option>
+                                </select>
+                              </div>
+                            )}
                           </div>
                         </motion.div>
                       )}
